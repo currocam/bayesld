@@ -1,0 +1,14 @@
+[project]
+name = "bayesld"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "arviz>=0.22.0",
+    "ipywidgets>=8.1.7",
+    "jupyterlab>=4.4.9",
+    "numpy>=2.3.3",
+    "pymc>=5.25.1",
+    "seaborn>=0.13.2",
+    "sympy>=1.14.0",
+    "sympytensor>=1.3.3",
+]
