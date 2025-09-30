@@ -1,0 +1,15 @@
+[package]
+name = "bayesld"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "bayesld"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1.0.100"
+rust-htslib = "0.50.0"
+pyo3 = { version = "0.21", features = ["extension-module"] }
+numpy = "0.21"
