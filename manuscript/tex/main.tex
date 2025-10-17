@@ -1,0 +1,138 @@
+\documentclass[10pt,letterpaper]{article}
+\usepackage[top=0.85in,left=2.75in,footskip=0.75in,marginparwidth=2in]{geometry}
+
+% use Unicode characters - try changing the option if you run into troubles with special characters (e.g. umlauts)
+\usepackage[utf8]{inputenc}
+
+% clean citations
+\usepackage{cite}
+
+% hyperref makes references clicky. use \url{www.example.com} or \href{www.example.com}{description} to add a clicky url
+\usepackage{nameref,hyperref}
+
+% line numbers
+\usepackage[right]{lineno}
+
+% improves typesetting in LaTeX
+\usepackage{microtype}
+\DisableLigatures[f]{encoding = *, family = * }
+
+% text layout - change as needed
+\raggedright
+\setlength{\parindent}{0.5cm}
+\textwidth 5.25in 
+\textheight 8.75in
+
+% Remove % for double line spacing
+%\usepackage{setspace} 
+%\doublespacing
+
+% remove brackets from references
+\makeatletter
+\renewcommand{\@biblabel}[1]{\quad#1.}
+\makeatother
+
+% headrule, footrule and page numbers
+\usepackage{lastpage,fancyhdr,graphicx}
+\fancyhf{}
+
+% use \textcolor{color}{text} for colored text (e.g. highlight to-do areas)
+\usepackage{color}
+
+
+% define custom colors (this one is for figure captions)
+\definecolor{Gray}{gray}{.25}
+
+% this is required to include graphics
+\usepackage{graphicx}
+
+% use if you want to put caption to the side of the figure - see example in text
+\usepackage{sidecap}
+
+% use for have text wrap around figures
+\usepackage{wrapfig}
+\usepackage[pscoord]{eso-pic}
+\usepackage[fulladjust]{marginnote}
+\reversemarginpar
+\usepackage{microtype}
+% document begins here
+\begin{document}
+\vspace*{0.35in}
+
+% title goes here:
+\begin{flushleft}
+{\Large
+\textbf\newline{BayesLD manuscrip}
+}
+\newline
+% authors go here:
+\\
+Author 1\textsuperscript{1},
+Author 2\textsuperscript{2},
+Author 3\textsuperscript{1},
+Author 4\textsuperscript{1},
+Author 5\textsuperscript{2},
+Author 6\textsuperscript{2},
+Author 7\textsuperscript{1,*}
+\\
+\bigskip
+\bf{1} Affiliation A
+\\
+\bf{2} Affiliation B
+\\
+\bigskip
+* correseponding@author.mail
+
+\end{flushleft}
+
+%\section*{Abstract}
+
+
+% now start line numbers
+\linenumbers
+
+\section*{Introduction}
+
+\begin{itemize}
+    \item Estimating effective population size is a central topic in evolutionary biology and has a long tradition. 
+    \item In particular, the study of very recent effective population size is particularly relevant for conservation biology.
+    \item Climate change and human actions can severely change the demography of natural populations. Modeling such changes is a fundamental scientific task to better understand them. 
+    \item Invasions are ecologically and evolutionarily very interesting and perhaps more challenging than other scenarios. We focus on them in this work to illustrate some general principles in the modeling of recent effective population size. 
+\end{itemize}
+
+\marginpar{\color{Gray}{Why we need a special method for very recent Ne}}\begin{itemize}
+    \item  The study of effective population size is typically done using the SFS or a PSMC-like approach. However, such methods are not ideal to study very recent Ne for conservation purposes.  
+    \item Mutations accumulate slowly, therefore providing limited resolution to study recent Ne changes. Second, PSMC-like methods have limited resolution because of sample sizes. One well-known consequence of coalescent theory is that we need more lineages to have a better resolution of the recent past than most ancient ones. 
+\end{itemize}
+
+\marginpar{\color{Gray}{Why we choose to work with LD data}}\begin{itemize}
+    \item   Because of this, much attention has been given to methods that take LD and IBD into account. Such summary statistics are informative of the more recent past, as recombination events happen much more frequently than mutations. Think of this as a recombination clock. 
+    \item Here, we will focus on LD data as our focus is on conservation genomic efforts where phased sequencing data is less common, sample sizes are often low, and reference panels don’t exist. As we will make evident later, LD is an indirect measure of IBD blocks. Therefore, the limitation is on the detection of such blocks. 
+\end{itemize}
+
+\marginpar{\color{Gray}{Review on prior work on LD to infer recent Ne}}\begin{itemize}
+    \item Existing methods have been proposed specifically to target very recent effective population size. This list includes GONE, IBDNe, currentNE, and HapNe. 
+    \item One aspect that all approaches have in common is that they are either non-parametric approaches or, in the case of HapNe, they include an automatic procedure to parametrize a piecewise function of Ne. 
+    \item Moreover, all previous methods impose regularization in one way or another. That is, they penalize abrupt changes and prefer smooth Ne solutions.
+    \item Whereas existing approaches can be useful, we argue that, in many cases, we can do better by (1) choosing appropriate parameterizations of Ne and (2) incorporating prior knowledge. 
+\end{itemize}
+
+\marginpar{\color{Gray}{Link with the rest of the manuscript. }}\begin{itemize}
+    \item We exemplify this by considering the case of  biological invasion (where a handful of invaders successfully expanded into a new territory), it is contraproductive to have the presence of abrupt changes in Ne. In fact, many times this is exactly what we aim to estimate. This results in artifacts in existing methods. 
+    \item Moreover, we found that some scenarios including multiple introductions are unidentifiable. We can, however, incorporate prior knowledge and estimate such parameters. 
+    \item This is not exclusive to invasion scenarios, but it could be the norm. Conservation geneticists can take advantage of the theoretical explanation, numerical methods, and analysis suggestions we provide. 
+\end{itemize}
+
+\section{Theoretical model}
+\showthe\textwidth
+
+
+\nolinenumbers
+
+%This is where your bibliography is generated. Make sure that your .bib file is actually called library.bib
+\bibliography{library}
+
+%This defines the bibliographies style. Search online for a list of available styles.
+\bibliographystyle{abbrv}
+
+\end{document}
