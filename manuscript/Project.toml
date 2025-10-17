@@ -1,0 +1,7 @@
+[deps]
+ArviZ = "131c737c-5715-5e2e-ad31-c244f01c1dc7"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
+NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
+NPZ = "15e1cf62-19b3-5cfa-8e77-841668bca605"
+PyCall = "438e738f-606a-5dbb-bf0a-cddfbfd45ab0"
