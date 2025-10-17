@@ -1,78 +1,71 @@
-using Makie, CairoMakie
 using NPZ
-
+data = npzread("data.npz")
 # Load data
-data = npzread("analytical_data_means.npz")
-midpoints = (data["constant_left"] .+ data["constant_right"]) ./ 2 .* 100
-times = 0:0.1:100
+using CairoMakie
 
 with_theme(theme_latexfonts()) do
-    f = Figure(fontsize = 12)
-    
-    # Use default color palette
-    colors = Makie.wong_colors()
-    color_constant = colors[1]
-    color_growth = colors[2]
-    
-    ax1 = Axis(f[1, 1],
-        xlabel = "Time (generations ago)",
-        ylabel = "Effective population size",
-        subtitle="Demographic scenario"
+    # Set figure width
+    fig = Figure(size = (379.4175, 200) .* 2, fontsize = 14)
+
+    # Create two side-by-side axes
+    ax1 = Axis(
+        fig[1, 2],
+        yscale = log10,
+        xlabel = L"\text{Distance (centimorgan)}",
+        ylabel = L"\mathbb{E}[X_iY_iX_jY_j]",
+        subtitle = "Linkage disequilibrium decay"
     )
-    
-    stairs!(ax1, times, 10_000 * exp.(0.0 .* times), 
-            color = color_constant, 
-            linewidth = 2, step = :post)
-    # Growth rate is positive
-    stairs!(ax1, times, 10_000 * exp.(-(0.05) .* times), 
-            color = color_growth, 
-            linewidth = 2, step = :post)
-    
-    xlims!(ax1, 0, 50)
-    ylims!(ax1, 0, 11_000)
-    
-    ax2 = Axis(f[1, 2],
-        xlabel = "Distance (centiMorgan)",
-        ylabel = L"\mathbb{E}[X_i Y_i X_j Y_j]",
-        subtitle="Linkage disequilibrium decay"
+
+    ax2 = Axis(
+        fig[1, 1],
+        xlabel = L"\text{Time (generations ago)}",
+        ylabel = L"\text{Effective population size (Ne)}",
+        subtitle = "Demographic scenario"
     )
-    
-    scatter!(ax2, midpoints, data["constant_sims_mean"], 
-             color = color_constant, markersize = 6)
-    lines!(ax2, midpoints, data["constant_predictions_mean"], 
-           color = color_constant, linewidth = 2)
-    
-    scatter!(ax2, midpoints, data["growth_sims_mean"], 
-             color = color_growth, markersize = 6)
-    lines!(ax2, midpoints, data["growth_predictions_mean"], 
-           color = color_growth, linewidth = 2)
-    
-    # Custom legend outside the plots
-    Legend(f[2, :],
-        [
-            [LineElement(color = color_constant, linewidth = 2),
-             LineElement(color = color_growth, linewidth = 2)],
-            [MarkerElement(color = color_constant, marker = :circle, markersize = 10),
-             LineElement(color = color_constant, linewidth = 2)]
-        ],
-        [
-            ["Constant", "Growth"],
-            ["Simulations", "Predictions"]
-        ],
-        ["Scenario", "Data type"],
+
+    # Define line styles (using default Makie color palette)
+    linestyles = [:solid, :dash, :dot, :dashdot]
+
+    # Constants from the simulations
+    Nec = 5_000
+    t_inv = 50
+    times = 0:70
+
+    # Store plot elements for legend
+    elements = []
+    labels = []
+
+    # Plot for each index
+    for (idx, i) in enumerate([1, 3, 4, 5])
+        alpha = data["alphas"][i]
+
+        # Left plot: scatter data
+        s = scatter!(ax1, data["midpoints"], data["predictions"][i, :])
+
+        # Right plot: population size over time
+        Nea = Nec * exp(-alpha * t_inv)
+        y = Nec .* exp.(-alpha * times)
+        y[times .>= t_inv] .= Nea
+
+        l = lines!(
+            ax2, times, y,
+            linestyle = linestyles[idx],
+            linewidth = 3
+        )
+
+        # Store for legend (use line element with marker)
+        push!(elements, [s, l])
+        push!(labels, "α=$(alpha)")
+    end
+
+    # Add shared legend below, centered across both axes
+    Legend(
+        fig[2, :], elements, labels,
         orientation = :horizontal,
         tellwidth = false,
         tellheight = true,
-        titleposition = :left
+        halign = :center
     )
-    
-    Label(f[1, 1, Bottom()], "A", fontsize = 14, halign = :left)
-    Label(f[1, 2, Bottom()], "B", fontsize = 14, halign = :left)
-    
-    save("figure.pdf", f, pt_per_unit = 1)
-    f
+    save("figure.pdf", fig, pt_per_unit = 1)
+    fig
 end
-
-
-
-

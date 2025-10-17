@@ -5,25 +5,15 @@ rule all:
 
 rule generate_data:
     output:
-        "analytical_data.npz",
-    threads: 8
+        "data.npz",
     script:
-        "generate_data.py"
-
-
-rule convert_to_npz:
-    input:
-        "analytical_data.npz",
-    output:
-        "analytical_data_means.npz",
-    script:
-        "extract_data.py"
+        "data.py"
 
 
 rule plot:
     input:
         "plot.jl",
-        "analytical_data_means.npz",
+        "data.npz",
     output:
         "figure.pdf",
     shell:
