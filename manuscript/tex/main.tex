@@ -4,33 +4,29 @@
 % use Unicode characters - try changing the option if you run into troubles with special characters (e.g. umlauts)
 \usepackage[utf8]{inputenc}
 
-% clean citations
-\usepackage{cite}
-
 % hyperref makes references clicky. use \url{www.example.com} or \href{www.example.com}{description} to add a clicky url
 \usepackage{nameref,hyperref}
 
 % line numbers
 \usepackage[right]{lineno}
-
+\usepackage[square,numbers]{natbib}
+\bibliographystyle{abbrvnat}
 % improves typesetting in LaTeX
-\usepackage{microtype}
-\DisableLigatures[f]{encoding = *, family = * }
+%\let\CheckCommand\providecommand
+%\usepackage{microtype}
+%\DisableLigatures[f]{encoding = *, family = * }
 
 % text layout - change as needed
 \raggedright
 \setlength{\parindent}{0.5cm}
 \textwidth 5.25in 
 \textheight 8.75in
+\usepackage{setspace}
+\onehalfspacing
 
 % Remove % for double line spacing
 %\usepackage{setspace} 
 %\doublespacing
-
-% remove brackets from references
-\makeatletter
-\renewcommand{\@biblabel}[1]{\quad#1.}
-\makeatother
 
 % headrule, footrule and page numbers
 \usepackage{lastpage,fancyhdr,graphicx}
@@ -48,13 +44,14 @@
 
 % use if you want to put caption to the side of the figure - see example in text
 \usepackage{sidecap}
-
+\usepackage{amsmath}
+\usepackage{amsfonts}
 % use for have text wrap around figures
 \usepackage{wrapfig}
 \usepackage[pscoord]{eso-pic}
 \usepackage[fulladjust]{marginnote}
 \reversemarginpar
-\usepackage{microtype}
+%%\usepackage{microtype}
 % document begins here
 \begin{document}
 \vspace*{0.35in}
@@ -81,7 +78,7 @@ Author 7\textsuperscript{1,*}
 \bf{2} Affiliation B
 \\
 \bigskip
-* correseponding@author.mail
+* corresponding@author.mail
 
 \end{flushleft}
 
@@ -91,18 +88,19 @@ Author 7\textsuperscript{1,*}
 % now start line numbers
 \linenumbers
 
-\section*{Introduction}
+\section{Introduction}
 
-\begin{itemize}
+\marginpar{\color{Gray}{Introduction}}\begin{itemize}
     \item Estimating effective population size is a central topic in evolutionary biology and has a long tradition. 
     \item In particular, the study of very recent effective population size is particularly relevant for conservation biology.
     \item Climate change and human actions can severely change the demography of natural populations. Modeling such changes is a fundamental scientific task to better understand them. 
-    \item Invasions are ecologically and evolutionarily very interesting and perhaps more challenging than other scenarios. We focus on them in this work to illustrate some general principles in the modeling of recent effective population size. 
+    \item Invasions are ecologically and evolutionarily very interesting. We focus on them to illustrate how parametric models based on scientifically informed models can sometimes outperform other approaches. 
 \end{itemize}
 
 \marginpar{\color{Gray}{Why we need a special method for very recent Ne}}\begin{itemize}
-    \item  The study of effective population size is typically done using the SFS or a PSMC-like approach. However, such methods are not ideal to study very recent Ne for conservation purposes.  
-    \item Mutations accumulate slowly, therefore providing limited resolution to study recent Ne changes. Second, PSMC-like methods have limited resolution because of sample sizes. One well-known consequence of coalescent theory is that we need more lineages to have a better resolution of the recent past than most ancient ones. 
+    \item  The study of effective population size is typically done using the SFS or a PSMC-like approach. However, such methods are not ideal to study very recent Ne.  
+    \item Mutations accumulate slowly, therefore providing limited resolution to study recent Ne changes. That makes the SFS not very informative. 
+    \item Second, PSMC-like methods have limited resolution because of sample sizes. One well-known consequence of coalescent theory is that we need more lineages to have a better resolution of the recent past than most ancient ones. 
 \end{itemize}
 
 \marginpar{\color{Gray}{Why we choose to work with LD data}}\begin{itemize}
@@ -111,28 +109,130 @@ Author 7\textsuperscript{1,*}
 \end{itemize}
 
 \marginpar{\color{Gray}{Review on prior work on LD to infer recent Ne}}\begin{itemize}
-    \item Existing methods have been proposed specifically to target very recent effective population size. This list includes GONE, IBDNe, currentNE, and HapNe. 
+    \item Existing methods have been proposed specifically to target very recent effective population size. This list includes GONE\cite{Santiago_2025}, IBDNe, and HapNe. 
     \item One aspect that all approaches have in common is that they are either non-parametric approaches or, in the case of HapNe, they include an automatic procedure to parametrize a piecewise function of Ne. 
-    \item Moreover, all previous methods impose regularization in one way or another. That is, they penalize abrupt changes and prefer smooth Ne solutions.
-    \item Whereas existing approaches can be useful, we argue that, in many cases, we can do better by (1) choosing appropriate parameterizations of Ne and (2) incorporating prior knowledge. 
+    \item Moreover, all previous methods impose regularization in one way or another. That is, they penalize abrupt changes and prefer smooth Ne trajectories.
 \end{itemize}
+
 
 \marginpar{\color{Gray}{Link with the rest of the manuscript. }}\begin{itemize}
-    \item We exemplify this by considering the case of  biological invasion (where a handful of invaders successfully expanded into a new territory), it is contraproductive to have the presence of abrupt changes in Ne. In fact, many times this is exactly what we aim to estimate. This results in artifacts in existing methods. 
+    \item We consider the case of  biological invasion (where a handful of invaders successfully expanded into a new territory). We found it is contraproductive to penalize an abrupt change in Ne. In fact, many times this abrupt change is exactly what we aim to estimate. This results in artifacts in existing methods. 
     \item Moreover, we found that some scenarios including multiple introductions are unidentifiable. We can, however, incorporate prior knowledge and estimate such parameters. 
-    \item This is not exclusive to invasion scenarios, but it could be the norm. Conservation geneticists can take advantage of the theoretical explanation, numerical methods, and analysis suggestions we provide. 
+    \item This is not exclusive to invasion scenarios, but it could be the norm. Conservation geneticists can take advantage of the theoretical explanation, numerical methods, and analysis suggestions we provide in the form of a \texttt{Python} package.  
 \end{itemize}
 
-\section{Theoretical model}
-\showthe\textwidth
+\section{Model}
+The inference approach we propose is based on the previous work by \citet{fournier}. Specifically, it is built around the following approximation that links linkage disequilibrium (LD) with coalescent theory under the Sequential Markovian coalescent (SMC). 
 
+\subsection{LD and identity-by-descent blocks}
+
+Here, we define an IBD block as a segment of DNA that a pair of haplotypes inherited from a recent common ancestor without experiencing recombination. Linkage disequilibrium is an indirect measure of the amount of identity-by-descent (IBD) sharing in a population. This is because the genotypes of a pair of loci can only be correlated if there’s a certain amount of IBD block that spans both loci present in the population. 
+
+Consider two different loci, $x$ and $y$, that are $u$ Morgan apart. Given a sample of individuals, we can estimate the allele frequency at both loci and define the centered and standardized haplotype genotypes, $X_{i}$ and $Y_{i}$. If we neglect finite sample size errors, it follows from the definition of variance that $E[X] = E[Y] = 0$ and $E[X^2] = E[Y^2] = 1$. 
+
+\citet{fournier} suggested that pairs of high frequency loci (with minor allele frequency greater than 0.25) that are not very close ($u>$ 0.5 cM) satisfy that $\mathbb E[X_iX_j \mid\text{IBD}] \approx \mathbb E[X^2] = 1$ and $\mathbb E[X_iX_j \mid\neg \text{IBD}] \approx \mathbb E[X]^2 = 0$. Under this assumptions, it follows that 
+\begin{align}
+    \mathbb{E}[X_{i}Y_{i}X_{j}Y_{j}]
+    &= S(u)\, \mathbb{E}[X_{i}Y_{i}X_{j}Y_{j} \mid \text{IBD}] 
+    + (1 - S(u))\, \mathbb{E}[X_{i}Y_{i}X_{j}Y_{j} \mid \neg\text{IBD}] = S(u)
+\end{align}
+
+where $S(u)$ is the probability that two loci that are $u$ Morgans apart are in IBD. For the case of diploid (unphased) individuals, \citet{fournier} proposed to neglect correlations induced by more than one pair of haplotypes being in IBD and suggested that 
+\begin{align}
+    \mathbb{E}[G_{x,i} G_{y,i} G_{x,j} G_{y,j}] 
+    &= \mathbb{E}[(X_{i,1}+X_{i,2})(Y_{i,1}+Y_{i,2})(X_{j,1}+X_{j,2})(Y_{j,1}+Y_{j,2})] \\
+    &= \frac{1}{4} \sum_{\alpha,\beta,\gamma,\delta = \{1,2\}} 
+       \mathbb{E}[X_{i,\alpha} X_{j,\beta} Y_{i,\gamma} Y_{j,\delta}] \\
+    &\approx \frac{1}{4} \sum_{\alpha,\beta = \{1,2\}} 
+       \mathbb{E}[X_{i,\alpha} X_{j,\beta} Y_{i,\alpha} Y_{j,\beta}] \\
+    &\approx \frac{1}{4} \sum_{\alpha,\beta = \{1,2\}} S(u) = S(u)
+\end{align}
+
+
+where $G_{x,i}$ and $G_{y,i}$ are the centered and standardized unphased diploid genotypes. 
+
+\subsection{Demographic scenarios}
+
+The appeal of the approximation proposed by \citet{fournier} is that the LD statistic $\mathbb E[G_{x,i}G_{y,i}G_{x,j}G_{y,j}]$ depends only on $S(u)$, the probability that two loci that are $u$ Morgans apart are in IBD. Under sequential markovian coalescent, $S(u)$ is simply the probability that there has not been recombination event between them since they coalesce. 
+
+Assuming recombination follows a Poisson process and marginalizing across all possible coalescent times
+
+\begin{equation}
+    S(u \mid \theta) 
+    \overset{\text{by SMC}}{\approx} \int_0^\infty f(t \mid \theta) \, \exp(-2 t u) \, dt
+\end{equation}
+
+where $f(t, \mid \theta)$ is the single locus coalescent probability under the given demographic model. This relationship, although approximate, is very powerful as exact solutions of $f(t, \mid \theta)$ can be obtained analytically or numerically\cite{Sendrowski_2025} for many different demographic scenarios. 
+
+
+
+
+In practice, it is natural to compare the theoretical expectations under a given demographic model against binned empirical observations (i.e. averaging across pairs of high-frequency loci whose distance fall within a bin $(u_i, u_j)$. 
+
+In this work, we focus in two different demographic scenarios that are relevant when studying invasions in nature. 
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{manuscript/analysis/01-theory-predictions/figure.pdf}
+    \caption{Caption}
+    \label{fig:placeholder}
+\end{figure}
 
 \nolinenumbers
 
 %This is where your bibliography is generated. Make sure that your .bib file is actually called library.bib
 \bibliography{library}
 
-%This defines the bibliographies style. Search online for a list of available styles.
-\bibliographystyle{abbrv}
+\section{Appendix A}
+
+\subsection{Bottleneck growth demography}
+
+\color{red}
+
+Next, we detail the efficient numerical approach we used to compute $\mathbb E[G_{x,i}G_{y,i}G_{x,j}G_{y,j}]$. 
+
+Here, we consider a demographic scenario of an instantaneous change in $N_e$ followed by an exponential phase. 
+
+\begin{equation}
+N_e(t) =
+\begin{cases}
+N_c \exp(-\alpha t), & \text{if } t \le T_0, \\
+N_a, & \text{otherwise.}
+\end{cases}
+\end{equation}
+
+If we solve $S(u\mid\theta)$ in pieces as well,
+
+\begin{equation}
+     S_1(u, t) = \frac{e^{\alpha t} e^{- 2 t u} e^{- \begin{cases} \frac{e^{\alpha t}}{2 N_c \alpha} - \frac{1}{2 N_c \alpha} & \text{for}\: N_c \alpha \neq 0 \\\frac{t}{2 N_c} & \text{otherwise} \end{cases}}}{2 N_c}
+\end{equation}
+
+
+
+\begin{equation}
+    S_2(u, t) = \frac{e^{- 2 t u} e^{- \begin{cases} \frac{N_c \alpha \left(t - T_0\right) - N_a \left(1 - e^{\alpha T_0}\right)}{2 N_c N_a \alpha} & \text{for}\: N_c \alpha \neq 0 \\\frac{N_c \left(t - T_0\right) + N_a T_0}{2 N_c N_a} & \text{otherwise} \end{cases}}}{2 N_a}
+\end{equation}
+
+To avoid numerical errors, we approximate $S_1(u, t)$ differently when $\alpha$ is very close to zero by considering two terms of the Taylor expansion,
+
+\begin{equation}
+    \alpha \left(\frac{t e^{- \frac{t}{2 N_c}} e^{- 2 t u}}{2 N_c} - \frac{t^{2} e^{- \frac{t}{2 N_c}} e^{- 2 t u}}{8 N_c^{2}}\right) + \frac{e^{- \frac{t}{2 N_c}} e^{- 2 t u}}{2 N_c}
+\end{equation}
+
+
+And numerically evaluate using Gaussian quadrature rules
+
+\begin{equation}
+        \mathbb E[G_{x,i}G_{y,i}G_{x,j}G_{y,j}] = \int _{u_i} ^{u_j} \left (\int_0^{T_0} S_1(u, t) dt + \int_{T_1}^\infty S_2(u, t) dt \right ) du
+\end{equation}
+
+We implemented a vectorized and efficient calculation of this model using \texttt{pytensor}, which is compatible with autodiff. Also, notice that in practice, it's natural to compare theoretical expectations against binned empirical observations. We address this by numerically computing the integral 
+
+\begin{equation}
+        S(u \mid \theta) = \int_0^{T_0} S_1(u, t) dt + \int_{T_1}^\infty S_2(u, t) dt
+\end{equation}
+
+\subsection{Multiple introductions}
+
 
 \end{document}
