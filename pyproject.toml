@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "bayesld"
-requires-python = ">=3.12"
+requires-python = "==3.12.*"
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
@@ -13,19 +13,9 @@ classifiers = [
 dynamic = ["version"]
 dependencies = [
     "arviz==0.22",
-    "demesdraw>=0.4.0",
-    "ipywidgets>=8.1.7",
-    "jupyterlab>=4.3.8",
-    "msprime>=1.3.4",
-    "multiprocess>=0.70.18",
-    "preliz==0.20.0",
     "pymc>=5.22.0",
-    "sbi>=0.25.0",
-    "seaborn>=0.13.2",
-    "snakemake>=9.13.2",
     "sympy>=1.13.3",
     "sympytensor>=1.2.1",
-    "tqdm>=4.67.1",
 ]
 [project.optional-dependencies]
 tests = [
@@ -34,3 +24,20 @@ tests = [
 [tool.maturin]
 python-source = "python"
 features = ["pyo3/extension-module"]
+
+[tool.uv.workspace]
+members = [
+    "manuscript",
+]
+
+[dependency-groups]
+dev = [
+    "demesdraw>=0.4.1",
+    "ipywidgets>=8.1.8",
+    "jupyterlab>=4.4.10",
+    "msprime>=1.3.4",
+    "multiprocess>=0.70.18",
+    "preliz>=0.23.0",
+    "seaborn>=0.13.2",
+    "tqdm>=4.67.1",
+]
