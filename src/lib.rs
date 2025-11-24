@@ -230,12 +230,12 @@ fn compute_ld<'py>(
 
     // Convert results to numpy arrays
     use numpy::IntoPyArray;
-    let mean = all_means.into_pyarray(py);
-    let variance = all_variances.into_pyarray(py);
-    let n = all_counts.into_pyarray(py);
-    let left = all_left_edges.into_pyarray(py);
-    let right = all_right_edges.into_pyarray(py);
-    let window_id = all_window_ids.into_pyarray(py);
+    let mean = all_means.into_pyarray_bound(py).into_gil_ref();
+    let variance = all_variances.into_pyarray_bound(py).into_gil_ref();
+    let n = all_counts.into_pyarray_bound(py).into_gil_ref();
+    let left = all_left_edges.into_pyarray_bound(py).into_gil_ref();
+    let right = all_right_edges.into_pyarray_bound(py).into_gil_ref();
+    let window_id = all_window_ids.into_pyarray_bound(py).into_gil_ref();
     Ok((mean, variance, n, left, right, window_id))
 }
 
