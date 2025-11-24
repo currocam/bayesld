@@ -4,9 +4,11 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "arviz-plots>=0.6.0",
+    "jupyterlab>=4.4.10",
     "marimo>=0.17.7",
     "matplotlib-label-lines>=0.8.1",
     "multiprocess>=0.70.18",
     "pytinytex>=0.4.0",
+    "sbi>=0.25.0",
     "tqdm>=4.67.1",
 ]
