@@ -1,6 +1,18 @@
+# /// script
+# requires-python = "==3.12.*"
+# dependencies = [
+#     "arviz-plots==0.7.0",
+#     "bayesld",
+#     "msprime==1.3.4",
+# ]
+#
+# [tool.uv.sources]
+# bayesld = { git = "https://github.com/currocam/bayesld" }
+# ///
+
 import marimo
 
-__generated_with = "0.17.7"
+__generated_with = "0.18.1"
 app = marimo.App(width="medium")
 
 
@@ -140,7 +152,7 @@ def _(
     fig1.savefig("02-constant-inference/constant_predictions.pdf", dpi=600, bbox_inches="tight", transparent=True)
     plt.legend()
     plt.show()
-    return fig1, midpoints
+    return (midpoints,)
 
 
 @app.cell
@@ -148,7 +160,6 @@ def _(
     data_ancient_change,
     data_medium_change,
     data_recent_change,
-    fig1,
     midpoints,
     plt,
     prediction,
@@ -190,7 +201,7 @@ def _(
     ax2.set_xlabel(r"Distance between pairs of loci (cM)")
     ax2.set_ylabel(r"Relative prediction error")
     ax2.margins(x=0.02)
-    fig1.savefig("02-constant-inference/miss_specification_constant.pdf", dpi=600, bbox_inches="tight", transparent=True)
+    fig2.savefig("02-constant-inference/miss_specification_constant.pdf", dpi=600, bbox_inches="tight", transparent=True)
 
     # Legend at the bottom
     ax2.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=3)
