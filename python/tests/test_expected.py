@@ -35,8 +35,6 @@ MC_KWARGS = dict(
     num_replicates=2,
     ploidy=PLOIDY,
     model="hudson",
-    cores=1,
-    progressbar=False,
 )
 
 DET_KWARGS = dict(
@@ -59,8 +57,6 @@ MC_KWARGS_COMPARISON = dict(
     num_replicates=200,
     ploidy=PLOIDY,
     model="hudson",
-    cores=1,
-    progressbar=False,
 )
 
 
@@ -86,10 +82,8 @@ def test_deterministic_constant(rng):
 
 def test_montecarlo_constant(rng):
     Ne = rng.uniform(10, 2000)
-    pi_mean, ld_mean, pi_vec, ld_mat = montecarlo.expected_constant(Ne=Ne, **MC_KWARGS)
-    _assert_positive(pi_mean, ld_mean)
-    assert np.all(pi_vec > 0)
-    assert np.all(np.isfinite(ld_mat))
+    pi_vec, ld_mat = montecarlo.expected_constant(Ne=Ne, **MC_KWARGS)
+    _assert_positive(pi_vec.mean(), ld_mat.mean(axis=0))
 
 
 # ── Piecewise Exponential ────────────────────────────────────────────────────
@@ -111,12 +105,10 @@ def test_montecarlo_piecewise_exponential(rng):
     Ne_a = rng.uniform(10, 2000)
     t0 = rng.uniform(1, 100)
     alpha = rng.uniform(0.001, 0.1)
-    pi_mean, ld_mean, pi_vec, ld_mat = montecarlo.expected_piecewise_exponential(
+    pi_vec, ld_mat = montecarlo.expected_piecewise_exponential(
         Ne_c=Ne_c, Ne_a=Ne_a, t0=t0, alpha=alpha, **MC_KWARGS
     )
-    _assert_positive(pi_mean, ld_mean)
-    assert np.all(pi_vec > 0)
-    assert np.all(np.isfinite(ld_mat))
+    _assert_positive(pi_vec.mean(), ld_mat.mean(axis=0))
 
 
 # ── Exponential Carrying Capacity ────────────────────────────────────────────
@@ -140,14 +132,10 @@ def test_montecarlo_exponential_carrying_capacity(rng):
     t0 = rng.uniform(1, 50)
     t1 = t0 + rng.uniform(1, 50)
     alpha = rng.uniform(0.001, 0.1)
-    pi_mean, ld_mean, pi_vec, ld_mat = (
-        montecarlo.expected_exponential_carrying_capacity(
-            Ne_c=Ne_c, Ne_a=Ne_a, t0=t0, t1=t1, alpha=alpha, **MC_KWARGS
-        )
+    pi_vec, ld_mat = montecarlo.expected_exponential_carrying_capacity(
+        Ne_c=Ne_c, Ne_a=Ne_a, t0=t0, t1=t1, alpha=alpha, **MC_KWARGS
     )
-    _assert_positive(pi_mean, ld_mean)
-    assert np.all(pi_vec > 0)
-    assert np.all(np.isfinite(ld_mat))
+    _assert_positive(pi_vec.mean(), ld_mat.mean(axis=0))
 
 
 # ── Piecewise Constant ───────────────────────────────────────────────────────
@@ -167,12 +155,10 @@ def test_montecarlo_piecewise_constant(rng):
     n_epochs = rng.integers(2, 5)
     Ne_values = rng.uniform(10, 2000, size=n_epochs)
     t_boundaries = np.sort(rng.uniform(1, 100, size=n_epochs - 1))
-    pi_mean, ld_mean, pi_vec, ld_mat = montecarlo.expected_piecewise_constant(
+    pi_vec, ld_mat = montecarlo.expected_piecewise_constant(
         Ne_values=Ne_values, t_boundaries=t_boundaries, **MC_KWARGS
     )
-    _assert_positive(pi_mean, ld_mean)
-    assert np.all(pi_vec > 0)
-    assert np.all(np.isfinite(ld_mat))
+    _assert_positive(pi_vec.mean(), ld_mat.mean(axis=0))
 
 
 # ── Secondary Introduction ───────────────────────────────────────────────────
@@ -204,7 +190,7 @@ def test_montecarlo_secondary_introduction(rng):
     t0 = rng.uniform(1, 50)
     t1 = t0 + rng.uniform(1, 50)
     migration_rate = rng.uniform(0.0001, 0.1)
-    pi_mean, ld_mean, pi_vec, ld_mat = montecarlo.expected_secondary_introduction(
+    pi_vec, ld_mat = montecarlo.expected_secondary_introduction(
         Ne_1=Ne_1,
         Ne_2=Ne_2,
         Ne_a=Ne_a,
@@ -213,9 +199,7 @@ def test_montecarlo_secondary_introduction(rng):
         migration_rate=migration_rate,
         **MC_KWARGS,
     )
-    _assert_positive(pi_mean, ld_mean)
-    assert np.all(pi_vec > 0)
-    assert np.all(np.isfinite(ld_mat))
+    _assert_positive(pi_vec.mean(), ld_mat.mean(axis=0))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -399,31 +383,31 @@ class TestDeterministicVsMonteCarlo:
     def test_comparison_constant(self):
         Ne = 1000.0
         pi_det, ld_det = deterministic.expected_constant(Ne=Ne, **DET_KWARGS)
-        pi_mc, ld_mc, _, _ = montecarlo.expected_constant(Ne=Ne, **MC_KWARGS_COMPARISON)
-        np.testing.assert_allclose(pi_det, pi_mc, rtol=0.15)
-        np.testing.assert_allclose(ld_det, ld_mc, rtol=0.2)
+        pi_vec, ld_mat = montecarlo.expected_constant(Ne=Ne, **MC_KWARGS_COMPARISON)
+        np.testing.assert_allclose(pi_det, pi_vec.mean(), rtol=0.15)
+        np.testing.assert_allclose(ld_det, ld_mat.mean(axis=0), rtol=0.2)
 
     def test_comparison_piecewise_exponential(self):
         Ne_c, Ne_a, t0, alpha = 500.0, 2000.0, 50.0, 0.01
         pi_det, ld_det = deterministic.expected_piecewise_exponential(
             Ne_c=Ne_c, Ne_a=Ne_a, t0=t0, alpha=alpha, **DET_KWARGS
         )
-        pi_mc, ld_mc, _, _ = montecarlo.expected_piecewise_exponential(
+        pi_vec, ld_mat = montecarlo.expected_piecewise_exponential(
             Ne_c=Ne_c, Ne_a=Ne_a, t0=t0, alpha=alpha, **MC_KWARGS_COMPARISON
         )
-        np.testing.assert_allclose(pi_det, pi_mc, rtol=0.15)
-        np.testing.assert_allclose(ld_det, ld_mc, rtol=0.2)
+        np.testing.assert_allclose(pi_det, pi_vec.mean(), rtol=0.15)
+        np.testing.assert_allclose(ld_det, ld_mat.mean(axis=0), rtol=0.2)
 
     def test_comparison_exponential_carrying_capacity(self):
         Ne_c, Ne_a, t0, t1, alpha = 500.0, 2000.0, 20.0, 60.0, 0.01
         pi_det, ld_det = deterministic.expected_exponential_carrying_capacity(
             Ne_c=Ne_c, Ne_a=Ne_a, t0=t0, t1=t1, alpha=alpha, **DET_KWARGS
         )
-        pi_mc, ld_mc, _, _ = montecarlo.expected_exponential_carrying_capacity(
+        pi_vec, ld_mat = montecarlo.expected_exponential_carrying_capacity(
             Ne_c=Ne_c, Ne_a=Ne_a, t0=t0, t1=t1, alpha=alpha, **MC_KWARGS_COMPARISON
         )
-        np.testing.assert_allclose(pi_det, pi_mc, rtol=0.15)
-        np.testing.assert_allclose(ld_det, ld_mc, rtol=0.2)
+        np.testing.assert_allclose(pi_det, pi_vec.mean(), rtol=0.15)
+        np.testing.assert_allclose(ld_det, ld_mat.mean(axis=0), rtol=0.2)
 
     def test_comparison_piecewise_constant(self):
         Ne_values = np.array([500.0, 1000.0, 2000.0])
@@ -431,11 +415,11 @@ class TestDeterministicVsMonteCarlo:
         pi_det, ld_det = deterministic.expected_piecewise_constant(
             Ne_values=Ne_values, t_boundaries=t_boundaries, **DET_KWARGS
         )
-        pi_mc, ld_mc, _, _ = montecarlo.expected_piecewise_constant(
+        pi_vec, ld_mat = montecarlo.expected_piecewise_constant(
             Ne_values=Ne_values, t_boundaries=t_boundaries, **MC_KWARGS_COMPARISON
         )
-        np.testing.assert_allclose(pi_det, pi_mc, rtol=0.15)
-        np.testing.assert_allclose(ld_det, ld_mc, rtol=0.2)
+        np.testing.assert_allclose(pi_det, pi_vec.mean(), rtol=0.15)
+        np.testing.assert_allclose(ld_det, ld_mat.mean(axis=0), rtol=0.2)
 
     def test_comparison_secondary_introduction(self):
         Ne_1, Ne_2, Ne_a = 3000.0, 3000.0, 6000.0
@@ -450,7 +434,7 @@ class TestDeterministicVsMonteCarlo:
             migration_rate=m,
             **DET_KWARGS,
         )
-        pi_mc, ld_mc, _, _ = montecarlo.expected_secondary_introduction(
+        pi_vec, ld_mat = montecarlo.expected_secondary_introduction(
             Ne_1=Ne_1,
             Ne_2=Ne_2,
             Ne_a=Ne_a,
@@ -459,5 +443,5 @@ class TestDeterministicVsMonteCarlo:
             migration_rate=m,
             **MC_KWARGS_COMPARISON,
         )
-        np.testing.assert_allclose(pi_det, pi_mc, rtol=0.15)
-        np.testing.assert_allclose(ld_det, ld_mc, rtol=0.2)
+        np.testing.assert_allclose(pi_det, pi_vec.mean(), rtol=0.15)
+        np.testing.assert_allclose(ld_det, ld_mat.mean(axis=0), rtol=0.2)
