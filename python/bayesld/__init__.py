@@ -5,7 +5,7 @@ from tqdm.auto import tqdm
 
 # Set module docstring from the bayesld module
 from . import bayesld as _bayesld
-from . import deterministic
+from . import deterministic, surrogate_likelihoods
 from .bayesld import *
 
 

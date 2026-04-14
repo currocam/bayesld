@@ -8,13 +8,56 @@ import msprime
 import numpy as np
 from scipy.stats import norm, truncnorm
 
-from . import data_from_tree_sequence, deterministic
+from . import deterministic
+
+
+def discretize_demography(demography, n_steps=20):
+    """Convert a single-population msprime Demography to (time, Ne) tuples for smc_prime.
+
+    Parameters
+    ----------
+    demography : msprime.Demography
+        Single-population msprime demography (may include exponential epochs).
+    n_steps : int
+        Number of steps used to discretize each exponential epoch.
+
+    Returns
+    -------
+    list of (float, float)
+        List of (time_generations_ago, Ne) tuples, sorted by time.
+        First tuple always has time=0.0.
+    """
+    pop = demography.populations[0]
+    # Collect epochs as (t_start, initial_size, growth_rate)
+    # msprime: N(t) = initial_size * exp(-growth_rate * (t - t_start))
+    epochs = [(0.0, float(pop.initial_size), float(pop.growth_rate or 0.0))]
+    for event in sorted(demography.events, key=lambda e: e.time):
+        if not isinstance(event, msprime.demography.PopulationParametersChange):
+            continue
+        t = float(event.time)
+        prev_ne, prev_gr = epochs[-1][1], epochs[-1][2]
+        # If size/growth_rate not specified, inherit from previous epoch
+        ne = float(event.initial_size) if event.initial_size is not None else prev_ne * np.exp(-prev_gr * (t - epochs[-1][0]))
+        gr = float(event.growth_rate) if event.growth_rate is not None else prev_gr
+        epochs.append((t, ne, gr))
+
+    tuples = []
+    for i, (t_start, ne_start, growth_rate) in enumerate(epochs):
+        t_end = float(epochs[i + 1][0]) if i + 1 < len(epochs) else t_start + 10.0 * ne_start
+        if abs(growth_rate) < 1e-12:
+            tuples.append((t_start, ne_start * 2))
+        else:
+            ts = np.linspace(t_start, t_end, n_steps + 1)[:-1]
+            for t in ts:
+                ne = ne_start * np.exp(-growth_rate * (float(t) - t_start))
+                tuples.append((float(t), float(ne) * 2))
+    return tuples
 
 
 def _run_replicate(
     seed,
     sample_size,
-    demes_graph,
+    demography_arg,
     recombination_rate,
     sequence_length,
     mutation_rate,
@@ -24,19 +67,33 @@ def _run_replicate(
     model,
 ):
     "Run a single Monte Carlo replicate"
-    demography = msprime.Demography.from_demes(demes_graph)
-    ts = msprime.sim_ancestry(
-        samples={0: sample_size},
-        demography=demography,
-        recombination_rate=recombination_rate,
-        sequence_length=sequence_length,
-        random_seed=seed,
-        ploidy=ploidy,
-        model=model,
-    )
-    ts = msprime.sim_mutations(
-        ts, rate=mutation_rate, random_seed=seed, model=msprime.BinaryMutationModel()
-    )
+    from . import data_from_tree_sequence
+    if model == "discretized_smc_prime":
+        import bayesld as _bayesld
+        ts = _bayesld.smc_prime.sim_ancestry(
+            population_size=demography_arg,
+            num_samples=sample_size * ploidy,
+            sequence_length=sequence_length,
+            recombination_rate=recombination_rate,
+            random_seed=seed,
+        )
+        ts = msprime.sim_mutations(
+            ts, rate=mutation_rate, random_seed=seed, model=msprime.BinaryMutationModel()
+        )
+    else:
+        demography = msprime.Demography.from_demes(demography_arg)
+        ts = msprime.sim_ancestry(
+            samples={0: sample_size},
+            demography=demography,
+            recombination_rate=recombination_rate,
+            sequence_length=sequence_length,
+            random_seed=seed,
+            ploidy=ploidy,
+            model=model,
+        )
+        ts = msprime.sim_mutations(
+            ts, rate=mutation_rate, random_seed=seed, model=msprime.BinaryMutationModel()
+        )
     stats = data_from_tree_sequence(
         ts=ts,
         recombination_rate=recombination_rate,
@@ -70,12 +127,15 @@ def _run_replicates(
         raise ValueError("left_bins must be less than right_bins")
     rng = np.random.default_rng(int(random_seed))
     seeds = rng.integers(1, 2**32 - 1, size=num_replicates)
-    demes_graph = demography.to_demes()
+    if model == "discretized_smc_prime":
+        demography_arg = discretize_demography(demography)
+    else:
+        demography_arg = demography.to_demes()
     results = [
         _run_replicate(
             seeds[i],
             sample_size,
-            demes_graph,
+            demography_arg,
             recombination_rate,
             sequence_length,
             mutation_rate,
