@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import msprime
 import numpy as np
+from jax.sharding import Mesh, PartitionSpec as P
 from scipy.stats import norm, truncnorm
 
 from . import deterministic
@@ -105,8 +106,9 @@ def _run_replicate(
     return stats["mean_genetic_diversity"], stats["mean_linkage_disequilibrium"]
 
 
-def _run_replicates(
-    demography,
+def _parallel_mc(
+    build_demography,
+    jax_params,
     left_bins,
     right_bins,
     mutation_rate,
@@ -118,37 +120,106 @@ def _run_replicates(
     random_seed,
     num_replicates,
 ):
-    "Common logic across different demographic scenarios"
-    left_bins = np.asarray(left_bins)
-    right_bins = np.asarray(right_bins)
-    if len(left_bins) != len(right_bins):
-        raise ValueError("left_bins and right_bins must have the same length")
-    if np.any(left_bins >= right_bins):
-        raise ValueError("left_bins must be less than right_bins")
-    rng = np.random.default_rng(int(random_seed))
-    seeds = rng.integers(1, 2**32 - 1, size=num_replicates)
-    if model == "discretized_smc_prime":
-        demography_arg = discretize_demography(demography)
-    else:
-        demography_arg = demography.to_demes()
-    results = [
-        _run_replicate(
-            seeds[i],
-            sample_size,
-            demography_arg,
-            recombination_rate,
-            sequence_length,
-            mutation_rate,
-            left_bins,
-            right_bins,
-            ploidy,
-            model,
+    """Distribute num_replicates simulations across available JAX devices via shmap.
+
+    Each device runs an independent pure_callback executing its share of replicates
+    sequentially. The function is compatible with jax.jit when called inside a
+    jitted scope — all Python-world constants are captured in closures, while the
+    demographic parameters and random_seed flow through as traced JAX values.
+
+    Parameters
+    ----------
+    build_demography : callable
+        Pure-Python function (*float_params) -> msprime.Demography.  Receives the
+        concrete float values of jax_params at callback time.
+    jax_params : tuple of JAX arrays
+        Demographic parameters (scalars) that are traced by JAX.  These are
+        forwarded to build_demography inside the pure_callback.
+    left_bins, right_bins : np.ndarray
+        Bin edges in Morgans — captured as compile-time constants.
+    mutation_rate, recombination_rate, sequence_length : float
+        Simulation hyperparameters — captured as compile-time constants.
+    sample_size, ploidy : int
+        Sampling configuration — captured as compile-time constants.
+    model : str
+        msprime ancestry model — captured as compile-time constant.
+    random_seed : JAX scalar (int)
+        Base seed; each device derives its own stream via default_rng([seed, device_idx]).
+    num_replicates : int
+        Total number of replicates.  Padded up to the nearest multiple of n_devices;
+        the trailing padding is trimmed before returning.
+
+    Returns
+    -------
+    pi_replicates : array (num_replicates,)
+    ld_replicates : array (num_replicates, num_bins)
+    """
+    n_bins = len(left_bins)
+    n_devices = jax.device_count()
+    replicates_per_device = (num_replicates + n_devices - 1) // n_devices
+
+    mesh = Mesh(np.array(jax.devices()), ("devices",))
+    # Each device identifies itself via its position in this sharded index array.
+    device_indices = jnp.arange(n_devices)          # logical (n_devices,)
+    random_seed = jnp.asarray(random_seed, dtype=jnp.int64)
+
+    def _per_device_fn(device_idx, rand_seed, *params):
+        """Runs on each device; device_idx and rand_seed are local shards (shape ())."""
+
+        def _callback(d_idx, r_seed, *p):
+            demography = build_demography(*[float(x) for x in p])
+            if model == "discretized_smc_prime":
+                dem_arg = discretize_demography(demography)
+            else:
+                dem_arg = demography.to_demes()
+            # Use a sequence seed so each device gets a statistically independent stream.
+            # d_idx arrives as shape-(1,) shard; extract the scalar first.
+            rng = np.random.default_rng([int(np.asarray(r_seed).flat[0]),
+                                         int(np.asarray(d_idx).flat[0])])
+            seeds = rng.integers(1, 2**32 - 1, size=replicates_per_device)
+            results = [
+                _run_replicate(
+                    int(s), sample_size, dem_arg, recombination_rate,
+                    sequence_length, mutation_rate, left_bins, right_bins, ploidy, model,
+                )
+                for s in seeds
+            ]
+            pi = np.array([r[0] for r in results], dtype=np.float64)
+            ld = np.array([r[1] for r in results], dtype=np.float64)
+            return pi, ld
+
+        return jax.pure_callback(
+            _callback,
+            (
+                jax.ShapeDtypeStruct((replicates_per_device,), jnp.float64),
+                jax.ShapeDtypeStruct((replicates_per_device, n_bins), jnp.float64),
+            ),
+            device_idx, rand_seed, *params,
+            vmap_method="sequential",
         )
-        for i in range(num_replicates)
-    ]
-    pi_replicates = np.array([r[0] for r in results])
-    ld_replicates = np.array([r[1] for r in results])
-    return pi_replicates.astype(np.float64), ld_replicates.astype(np.float64)
+
+    # device_indices is sharded (P('devices')); rand_seed and demographic params
+    # are replicated (P()) — every device receives the same value.
+    in_specs = (P("devices"), P()) + tuple(P() for _ in jax_params)
+
+    pi_pad, ld_pad = jax.shard_map(
+        _per_device_fn,
+        mesh=mesh,
+        in_specs=in_specs,
+        out_specs=(P("devices"), P("devices")),
+    )(device_indices, random_seed, *jax_params)
+
+    # Trim padding introduced to reach a multiple of n_devices.
+    return pi_pad[:num_replicates], ld_pad[:num_replicates]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Public API
+# ══════════════════════════════════════════════════════════════════════════════
+# These functions are not decorated with @jax.jit themselves — their Python-world
+# constants (left_bins, rates, sample_size, …) are captured in closures, while
+# the demographic parameters flow as traced JAX scalars through pure_callback.
+# They compose correctly inside a caller's jax.jit without modification.
 
 
 def expected_constant(
@@ -201,32 +272,16 @@ def expected_constant(
     """
     left_bins = np.asarray(left_bins)
     right_bins = np.asarray(right_bins)
-    _n_bins = len(left_bins)
 
-    def _mc_callback(ne, seed):
-        ne = float(ne)
-        demography = msprime.Demography()
-        demography.add_population(name="pop0", initial_size=ne)
-        return _run_replicates(
-            demography=demography,
-            left_bins=left_bins,
-            right_bins=right_bins,
-            mutation_rate=mutation_rate,
-            recombination_rate=recombination_rate,
-            sequence_length=sequence_length,
-            sample_size=sample_size,
-            ploidy=ploidy,
-            model=model,
-            random_seed=seed,
-            num_replicates=num_replicates,
-        )
+    def build_demography(ne):
+        d = msprime.Demography()
+        d.add_population(name="pop0", initial_size=ne)
+        return d
 
-    out_type = (
-        jax.ShapeDtypeStruct((num_replicates,), jnp.float64),
-        jax.ShapeDtypeStruct((num_replicates, _n_bins), jnp.float64),
-    )
-    return jax.pure_callback(
-        _mc_callback, out_type, Ne, random_seed, vmap_method="sequential",
+    return _parallel_mc(
+        build_demography, (Ne,),
+        left_bins, right_bins, mutation_rate, recombination_rate,
+        sequence_length, sample_size, ploidy, model, random_seed, num_replicates,
     )
 
 
@@ -291,35 +346,17 @@ def expected_piecewise_exponential(
     """
     left_bins = np.asarray(left_bins)
     right_bins = np.asarray(right_bins)
-    _n_bins = len(left_bins)
 
-    def _mc_callback(ne_c, ne_a, t0_, alpha_, seed):
-        ne_c, ne_a, t0_, alpha_ = float(ne_c), float(ne_a), float(t0_), float(alpha_)
-        demography = msprime.Demography()
-        demography.add_population(name="pop0", initial_size=ne_c, growth_rate=alpha_)
-        demography.add_population_parameters_change(
-            time=t0_, initial_size=ne_a, growth_rate=0
-        )
-        return _run_replicates(
-            demography=demography,
-            left_bins=left_bins,
-            right_bins=right_bins,
-            mutation_rate=mutation_rate,
-            recombination_rate=recombination_rate,
-            sequence_length=sequence_length,
-            sample_size=sample_size,
-            ploidy=ploidy,
-            model=model,
-            random_seed=seed,
-            num_replicates=num_replicates,
-        )
+    def build_demography(ne_c, ne_a, t0_, alpha_):
+        d = msprime.Demography()
+        d.add_population(name="pop0", initial_size=ne_c, growth_rate=alpha_)
+        d.add_population_parameters_change(time=t0_, initial_size=ne_a, growth_rate=0)
+        return d
 
-    out_type = (
-        jax.ShapeDtypeStruct((num_replicates,), jnp.float64),
-        jax.ShapeDtypeStruct((num_replicates, _n_bins), jnp.float64),
-    )
-    return jax.pure_callback(
-        _mc_callback, out_type, Ne_c, Ne_a, t0, alpha, random_seed, vmap_method="sequential",
+    return _parallel_mc(
+        build_demography, (Ne_c, Ne_a, t0, alpha),
+        left_bins, right_bins, mutation_rate, recombination_rate,
+        sequence_length, sample_size, ploidy, model, random_seed, num_replicates,
     )
 
 
@@ -387,39 +424,18 @@ def expected_exponential_carrying_capacity(
     """
     left_bins = np.asarray(left_bins)
     right_bins = np.asarray(right_bins)
-    _n_bins = len(left_bins)
 
-    def _mc_callback(ne_c, ne_a, t0_, t1_, alpha_, seed):
-        ne_c, ne_a = float(ne_c), float(ne_a)
-        t0_, t1_, alpha_ = float(t0_), float(t1_), float(alpha_)
-        demography = msprime.Demography()
-        demography.add_population(name="pop0", initial_size=ne_c, growth_rate=0)
-        demography.add_population_parameters_change(
-            time=t0_, initial_size=ne_c, growth_rate=alpha_
-        )
-        demography.add_population_parameters_change(
-            time=t1_, initial_size=ne_a, growth_rate=0
-        )
-        return _run_replicates(
-            demography=demography,
-            left_bins=left_bins,
-            right_bins=right_bins,
-            mutation_rate=mutation_rate,
-            recombination_rate=recombination_rate,
-            sequence_length=sequence_length,
-            sample_size=sample_size,
-            ploidy=ploidy,
-            model=model,
-            random_seed=seed,
-            num_replicates=num_replicates,
-        )
+    def build_demography(ne_c, ne_a, t0_, t1_, alpha_):
+        d = msprime.Demography()
+        d.add_population(name="pop0", initial_size=ne_c, growth_rate=0)
+        d.add_population_parameters_change(time=t0_, initial_size=ne_c, growth_rate=alpha_)
+        d.add_population_parameters_change(time=t1_, initial_size=ne_a, growth_rate=0)
+        return d
 
-    out_type = (
-        jax.ShapeDtypeStruct((num_replicates,), jnp.float64),
-        jax.ShapeDtypeStruct((num_replicates, _n_bins), jnp.float64),
-    )
-    return jax.pure_callback(
-        _mc_callback, out_type, Ne_c, Ne_a, t0, t1, alpha, random_seed, vmap_method="sequential",
+    return _parallel_mc(
+        build_demography, (Ne_c, Ne_a, t0, t1, alpha),
+        left_bins, right_bins, mutation_rate, recombination_rate,
+        sequence_length, sample_size, ploidy, model, random_seed, num_replicates,
     )
 
 
@@ -480,39 +496,26 @@ def expected_piecewise_constant(
     """
     left_bins = np.asarray(left_bins)
     right_bins = np.asarray(right_bins)
-    _n_bins = len(left_bins)
+    Ne_values = jnp.asarray(Ne_values, dtype=jnp.float64)
+    t_boundaries = jnp.asarray(t_boundaries, dtype=jnp.float64)
 
-    def _mc_callback(ne_values, t_bounds, seed):
-        ne_values = np.asarray(ne_values, dtype=float).tolist()
-        t_bounds = np.asarray(t_bounds, dtype=float).tolist()
-        demography = msprime.Demography.isolated_model(initial_size=[ne_values[0]])
-        for t, N in zip(t_bounds, ne_values[1:]):
-            demography.add_population_parameters_change(time=t, initial_size=N)
-        return _run_replicates(
-            demography=demography,
-            left_bins=left_bins,
-            right_bins=right_bins,
-            mutation_rate=mutation_rate,
-            recombination_rate=recombination_rate,
-            sequence_length=sequence_length,
-            sample_size=sample_size,
-            ploidy=ploidy,
-            model=model,
-            random_seed=seed,
-            num_replicates=num_replicates,
-        )
+    def build_demography(*flat_params):
+        n_epochs = len(Ne_values)
+        ne_vals = [float(flat_params[i]) for i in range(n_epochs)]
+        t_bounds = [float(flat_params[n_epochs + i]) for i in range(n_epochs - 1)]
+        d = msprime.Demography.isolated_model(initial_size=[ne_vals[0]])
+        for t, N in zip(t_bounds, ne_vals[1:]):
+            d.add_population_parameters_change(time=t, initial_size=N)
+        return d
 
-    out_type = (
-        jax.ShapeDtypeStruct((num_replicates,), jnp.float64),
-        jax.ShapeDtypeStruct((num_replicates, _n_bins), jnp.float64),
-    )
-    return jax.pure_callback(
-        _mc_callback,
-        out_type,
-        np.asarray(Ne_values, dtype=float),
-        np.asarray(t_boundaries, dtype=float),
-        random_seed,
-        vmap_method="sequential",
+    # Flatten Ne_values and t_boundaries into individual JAX scalars so they
+    # flow through pure_callback as concrete values.
+    jax_params = tuple(Ne_values) + tuple(t_boundaries)
+
+    return _parallel_mc(
+        build_demography, jax_params,
+        left_bins, right_bins, mutation_rate, recombination_rate,
+        sequence_length, sample_size, ploidy, model, random_seed, num_replicates,
     )
 
 
@@ -585,50 +588,21 @@ def expected_secondary_introduction(
     """
     left_bins = np.asarray(left_bins)
     right_bins = np.asarray(right_bins)
-    _n_bins = len(left_bins)
 
-    def _mc_callback(ne_1, ne_2, ne_a, t0_, t1_, m, seed):
-        ne_1, ne_2, ne_a = float(ne_1), float(ne_2), float(ne_a)
-        t0_, t1_, m = float(t0_), float(t1_), float(m)
-        demography = msprime.Demography()
-        demography.add_population(name="focal", initial_size=ne_1)
-        demography.add_population(name="source", initial_size=ne_a)
-        demography.add_migration_rate_change(
-            time=0, rate=m, source="focal", dest="source"
-        )
-        demography.add_population_parameters_change(
-            population="focal", initial_size=ne_2, time=t0_
-        )
-        demography.add_migration_rate_change(time=t1_, rate=0, source="focal", dest="source")
-        demography.add_mass_migration(
-            time=t1_,
-            source="focal",
-            dest="source",
-            proportion=1.0,
-        )
-        return _run_replicates(
-            demography=demography,
-            left_bins=left_bins,
-            right_bins=right_bins,
-            mutation_rate=mutation_rate,
-            recombination_rate=recombination_rate,
-            sequence_length=sequence_length,
-            sample_size=sample_size,
-            ploidy=ploidy,
-            model=model,
-            random_seed=seed,
-            num_replicates=num_replicates,
-        )
+    def build_demography(ne_1, ne_2, ne_a, t0_, t1_, m):
+        d = msprime.Demography()
+        d.add_population(name="focal", initial_size=ne_1)
+        d.add_population(name="source", initial_size=ne_a)
+        d.add_migration_rate_change(time=0, rate=m, source="focal", dest="source")
+        d.add_population_parameters_change(population="focal", initial_size=ne_2, time=t0_)
+        d.add_migration_rate_change(time=t1_, rate=0, source="focal", dest="source")
+        d.add_mass_migration(time=t1_, source="focal", dest="source", proportion=1.0)
+        return d
 
-    out_type = (
-        jax.ShapeDtypeStruct((num_replicates,), jnp.float64),
-        jax.ShapeDtypeStruct((num_replicates, _n_bins), jnp.float64),
-    )
-    return jax.pure_callback(
-        _mc_callback,
-        out_type,
-        Ne_1, Ne_2, Ne_a, t0, t1, migration_rate, random_seed,
-        vmap_method="sequential",
+    return _parallel_mc(
+        build_demography, (Ne_1, Ne_2, Ne_a, t0, t1, migration_rate),
+        left_bins, right_bins, mutation_rate, recombination_rate,
+        sequence_length, sample_size, ploidy, model, random_seed, num_replicates,
     )
 
 

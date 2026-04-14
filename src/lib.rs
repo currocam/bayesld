@@ -426,14 +426,17 @@ mod smc_prime {
                 "population_size must be a number or a list of (time, size) tuples",
             ));
         };
-        let tables = simulations::sim_ancestry(
-            &demography,
-            num_samples,
-            sequence_length.unwrap_or(1.0),
-            recombination_rate.unwrap_or(0.0),
-            random_seed,
-        )
-        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let tables = py
+            .detach(|| {
+                simulations::sim_ancestry(
+                    &demography,
+                    num_samples,
+                    sequence_length.unwrap_or(1.0),
+                    recombination_rate.unwrap_or(0.0),
+                    random_seed,
+                )
+            })
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         ffi::table_collection_into_python_tree_sequence(py, tables)
     }
 }
