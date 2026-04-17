@@ -1,0 +1,4 @@
+# Ignore compiled Stan executables; keep source files
+*
+!*.stan
+!.gitignore
