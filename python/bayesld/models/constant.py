@@ -434,6 +434,7 @@ class ConstantDemography:
         num_replicates: int = 200,
         B: int = 200,
         seed: Optional[int] = None,
+        progress_bar: bool = True,
     ) -> "cmdstanpy.CmdStanPathfinder":  # noqa: F821
         """
         Run one round of surrogate active learning.
@@ -453,6 +454,9 @@ class ConstantDemography:
             Number of bootstrap replicates for bias estimation.
         seed : int or None
             RNG seed (Pathfinder seed and MC seeds are both derived from this).
+        progress_bar : bool
+            Whether to display a tqdm progress bar while evaluating candidate
+            points (default True).
 
         Returns
         -------
@@ -467,6 +471,7 @@ class ConstantDemography:
             )
 
         from scipy.stats import norm as sp_norm
+        from tqdm.auto import tqdm
         from .. import deterministic as det
         from .. import montecarlo2 as mc2
 
@@ -528,7 +533,13 @@ class ConstantDemography:
         )
 
         ne_draws = np.asarray(pf.stan_variable("Ne"))[:points_per_iter]
-        for ne in ne_draws:
+        iterator = tqdm(
+            ne_draws,
+            total=len(ne_draws),
+            desc="Active learning",
+            disable=not progress_bar,
+        )
+        for ne in iterator:
             mc_seed = int(rng.integers(2**31))
             self._eval_points.append(_mc_eval(float(ne), mc_seed))
 
