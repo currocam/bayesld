@@ -1,0 +1,6 @@
+# Ignore compiled Stan executables; keep source files and subdirectories
+*
+!*/
+!*.stan
+!*.md
+!.gitignore

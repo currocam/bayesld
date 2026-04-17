@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 from bayesld import deterministic
 from numpy.polynomial.legendre import leggauss
+from scipy.stats import norm
 
 jax.config.update("jax_enable_x64", True)
 
@@ -66,6 +67,10 @@ def _div(fit):
 
 def _ld(fit):
     return np.asarray(fit.stan_variable("mu_ld")[0])
+
+
+def _lp(fit):
+    return float(fit.stan_variable("lp")[0])
 
 
 # ── session-scoped model fixtures (compile once) ──────────────────────────────
@@ -336,3 +341,209 @@ class TestCarryingCapacity:
             _run_stan(model_carrying_capacity, self._data(Ne_c, Ne_a, t0, dt, alpha, LEFT_BINS, RIGHT_BINS))
         )
         np.testing.assert_allclose(np.array(py_ld), stan_ld, rtol=RTOL)
+
+
+# ── Likelihood functions ───────────────────────────────────────────────────────
+# OBS_LD: fixed random observations used across all lp tests.
+# mu_ld for each model is obtained from the existing mu_ld Stan models so that
+# the Python reference lp = sum_b Normal(obs | mu, SIGMA_LD) can be compared
+# directly to the Stan ld_lp_* output.
+
+_LP_RNG = np.random.default_rng(99)
+OBS_LD = _LP_RNG.uniform(0.01, 0.1, size=len(LEFT_BINS))
+SIGMA_LD = 0.001
+SIGMA_LD_ARR = np.full(len(LEFT_BINS), SIGMA_LD)
+
+
+def _lp_ref(obs_ld, mu_ld):
+    """sum_b Normal(obs_ld[b] | mu_ld[b], SIGMA_LD) log-pdf."""
+    return float(norm.logpdf(obs_ld, mu_ld, SIGMA_LD).sum())
+
+
+# ── LP fixtures ───────────────────────────────────────────────────────────────
+
+
+_THREADS_OPTS = {"cpp_options": {"STAN_THREADS": "true"}}
+
+
+@pytest.fixture(scope="session")
+def model_lp_piecewise_constant():
+    return cmdstanpy.CmdStanModel(
+        stan_file=str(STAN_DIR / "test_lp_piecewise_constant.stan"),
+        **_THREADS_OPTS,
+    )
+
+
+@pytest.fixture(scope="session")
+def model_lp_piecewise_exponential():
+    return cmdstanpy.CmdStanModel(
+        stan_file=str(STAN_DIR / "test_lp_piecewise_exponential.stan"),
+        **_THREADS_OPTS,
+    )
+
+
+@pytest.fixture(scope="session")
+def model_lp_carrying_capacity():
+    return cmdstanpy.CmdStanModel(
+        stan_file=str(STAN_DIR / "test_lp_carrying_capacity.stan"),
+        **_THREADS_OPTS,
+    )
+
+
+# ── TestLpPiecewiseConstant ───────────────────────────────────────────────────
+
+
+class TestLpPiecewiseConstant:
+    """
+    ld_lp_piecewise_constant must equal sum_b Normal(obs | mu_ld[b], sigma).
+    mu_ld is obtained from the mu_ld Stan model at the same parameters.
+    """
+
+    NE_VALUES = np.array([1000.0, 3000.0])
+    T_BOUNDARIES = np.array([100.0])
+
+    def _mu_data(self):
+        return dict(
+            n_bins=len(LEFT_BINS),
+            left_bins=LEFT_BINS.tolist(),
+            right_bins=RIGHT_BINS.tolist(),
+            n_epochs=len(self.NE_VALUES),
+            Ne_values=self.NE_VALUES.tolist(),
+            t_boundaries=self.T_BOUNDARIES.tolist(),
+            mutation_rate=MUTATION_RATE,
+            sample_size=SAMPLE_SIZE,
+            n_quad=50,
+            gl_nodes=GL_X_50.tolist(),
+            gl_weights=GL_W_50.tolist(),
+        )
+
+    def _lp_data(self):
+        return dict(
+            n_bins=len(LEFT_BINS),
+            left_bins=LEFT_BINS.tolist(),
+            right_bins=RIGHT_BINS.tolist(),
+            obs_ld=OBS_LD.tolist(),
+            est_sigma_ld=SIGMA_LD_ARR.tolist(),
+            n_epochs=len(self.NE_VALUES),
+            Ne_values=self.NE_VALUES.tolist(),
+            t_boundaries=self.T_BOUNDARIES.tolist(),
+            sample_size=SAMPLE_SIZE,
+            n_quad=50,
+            gl_nodes=GL_X_50.tolist(),
+            gl_weights=GL_W_50.tolist(),
+        )
+
+    def test_lp(self, model_piecewise_constant, model_lp_piecewise_constant):
+        mu_ld = _ld(_run_stan(model_piecewise_constant, self._mu_data()))
+        py_lp = _lp_ref(OBS_LD, mu_ld)
+        stan_lp = _lp(_run_stan(model_lp_piecewise_constant, self._lp_data()))
+        np.testing.assert_allclose(py_lp, stan_lp, rtol=RTOL)
+
+
+# ── TestLpPiecewiseExponential ────────────────────────────────────────────────
+
+
+class TestLpPiecewiseExponential:
+    """
+    ld_lp_piecewise_exponential must equal sum_b Normal(obs | mu_ld[b], sigma).
+    """
+
+    NE_C = 1000.0
+    NE_A = 3000.0
+    T0 = 100.0
+    ALPHA = 0.01
+
+    def _mu_data(self):
+        return dict(
+            n_bins=len(LEFT_BINS),
+            left_bins=LEFT_BINS.tolist(),
+            right_bins=RIGHT_BINS.tolist(),
+            Ne_c=self.NE_C,
+            Ne_a=self.NE_A,
+            t0=self.T0,
+            alpha=self.ALPHA,
+            mutation_rate=MUTATION_RATE,
+            sample_size=SAMPLE_SIZE,
+            n_quad=50,
+            gl_nodes=GL_X_50.tolist(),
+            gl_weights=GL_W_50.tolist(),
+        )
+
+    def _lp_data(self):
+        return dict(
+            n_bins=len(LEFT_BINS),
+            left_bins=LEFT_BINS.tolist(),
+            right_bins=RIGHT_BINS.tolist(),
+            obs_ld=OBS_LD.tolist(),
+            est_sigma_ld=SIGMA_LD_ARR.tolist(),
+            Ne_c=self.NE_C,
+            Ne_a=self.NE_A,
+            t0=self.T0,
+            alpha=self.ALPHA,
+            sample_size=SAMPLE_SIZE,
+            n_quad=50,
+            gl_nodes=GL_X_50.tolist(),
+            gl_weights=GL_W_50.tolist(),
+        )
+
+    def test_lp(self, model_piecewise_exponential, model_lp_piecewise_exponential):
+        mu_ld = _ld(_run_stan(model_piecewise_exponential, self._mu_data()))
+        py_lp = _lp_ref(OBS_LD, mu_ld)
+        stan_lp = _lp(_run_stan(model_lp_piecewise_exponential, self._lp_data()))
+        np.testing.assert_allclose(py_lp, stan_lp, rtol=RTOL)
+
+
+# ── TestLpCarryingCapacity ────────────────────────────────────────────────────
+
+
+class TestLpCarryingCapacity:
+    """
+    ld_lp_carrying_capacity must equal sum_b Normal(obs | mu_ld[b], sigma).
+    """
+
+    NE_C = 1000.0
+    NE_A = 3000.0
+    T0 = 50.0
+    T1 = 150.0
+    ALPHA = 0.01
+
+    def _mu_data(self):
+        return dict(
+            n_bins=len(LEFT_BINS),
+            left_bins=LEFT_BINS.tolist(),
+            right_bins=RIGHT_BINS.tolist(),
+            Ne_c=self.NE_C,
+            Ne_a=self.NE_A,
+            t0=self.T0,
+            t1=self.T1,
+            alpha=self.ALPHA,
+            mutation_rate=MUTATION_RATE,
+            sample_size=SAMPLE_SIZE,
+            n_quad=50,
+            gl_nodes=GL_X_50.tolist(),
+            gl_weights=GL_W_50.tolist(),
+        )
+
+    def _lp_data(self):
+        return dict(
+            n_bins=len(LEFT_BINS),
+            left_bins=LEFT_BINS.tolist(),
+            right_bins=RIGHT_BINS.tolist(),
+            obs_ld=OBS_LD.tolist(),
+            est_sigma_ld=SIGMA_LD_ARR.tolist(),
+            Ne_c=self.NE_C,
+            Ne_a=self.NE_A,
+            t0=self.T0,
+            t1=self.T1,
+            alpha=self.ALPHA,
+            sample_size=SAMPLE_SIZE,
+            n_quad=50,
+            gl_nodes=GL_X_50.tolist(),
+            gl_weights=GL_W_50.tolist(),
+        )
+
+    def test_lp(self, model_carrying_capacity, model_lp_carrying_capacity):
+        mu_ld = _ld(_run_stan(model_carrying_capacity, self._mu_data()))
+        py_lp = _lp_ref(OBS_LD, mu_ld)
+        stan_lp = _lp(_run_stan(model_lp_carrying_capacity, self._lp_data()))
+        np.testing.assert_allclose(py_lp, stan_lp, rtol=RTOL)

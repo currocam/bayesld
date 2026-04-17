@@ -118,7 +118,8 @@ def data_from_tree_sequence(
     }
 
 
-from . import montecarlo
+from . import models, montecarlo
+from .models import ConstantDemography
 
 __doc__ = _bayesld.__doc__
 if hasattr(_bayesld, "__all__"):
