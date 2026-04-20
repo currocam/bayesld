@@ -8,9 +8,9 @@ Includes:
 - Comparison tests (slow): deterministic and montecarlo results are sufficiently close.
 """
 
+import bayesld
 import jax
 import jax.numpy as jnp
-import bayesld
 import numpy as np
 import pytest
 from bayesld import deterministic, montecarlo

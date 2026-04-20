@@ -1,15 +1,19 @@
 """
-Constant-Ne demographic inference model.
+Exponential carrying-capacity demographic inference model.
 
-``ConstantDemography`` internally maintains two Stan programs — a fast
-deterministic approximation and a GP-surrogate that learns the relative LD
-bias of that approximation — and switches between them automatically depending
-on whether a synthetic MC evaluation dataset has been accumulated via
-``surrogate_active_learning``.
+``ExponentialCarryingCapacityDemography`` models::
 
-The GP surrogate fits the *relative* LD bias per bin::
+    Ne(t) = Ne_c                          for t < t0     (recent constant)
+    Ne(t) = Ne_c * exp(-alpha * (t - t0)) for t0 <= t < t1 (exponential growth backwards)
+    Ne(t) = Ne_a                          for t >= t1    (ancestral constant)
 
-    mc_ld(Ne, r) / det_ld(Ne, r) - 1  ~  GP(r)
+Stan parameters: ``log_Ne_c``, ``log_Ne_a``, ``ordered[2] log_t_boundaries``
+(entries are log[t0], log[t1] with t0 < t1 enforced by the ordered constraint),
+and ``alpha``.
+
+The GP surrogate fits the *relative* bias in LD predictions per bin::
+
+    mc_ld(theta, r) / det_ld(theta, r) - 1  ~  GP(r)
 
 where ``r`` is the bin midpoint (standardised).  The corrected LD is then
 ``det_ld * (1 + GP)``, which is dimensionless and scale-agnostic across bins.
@@ -28,16 +32,24 @@ from ._surrogate import (
     _GP_SURROGATE_PARAMS,
     _GP_SURROGATE_TRANSFORMED_DATA,
     _GP_SURROGATE_TRANSFORMED_PARAMS,
+    _stan_draw_matrix,
     _stan_vector,
 )
 
 _STAN_DIR = pathlib.Path(__file__).resolve().parent.parent.parent.parent / "stan"
 _THREADS_OPTS = {"cpp_options": {"STAN_THREADS": "true"}}
 
+_DEFAULT_N_QUAD = 16
 def _default_prior(diversity: np.ndarray, mutation_rate: float) -> str:
     ne_hat = float(np.mean(diversity)) / (4.0 * mutation_rate)
     log_ne_mu = float(np.log(ne_hat))
-    return f"    log_Ne ~ normal({log_ne_mu:.4f}, 1.0);"
+    return (
+        f"    log_Ne_c ~ normal({log_ne_mu:.4f}, 1.0);\n"
+        f"    log_Ne_a ~ normal({log_ne_mu:.4f}, 1.0);\n"
+        f"    log_t_boundaries[1] ~ normal({np.log(20.0):.4f}, 2.0);\n"
+        f"    log_t_boundaries[2] ~ normal({np.log(200.0):.4f}, 2.0);\n"
+        f"    alpha ~ normal(0, 0.5);"
+    )
 
 # ──────────────────────────────────────────────────────────────────────────
 # Stan source fragments
@@ -53,6 +65,9 @@ data {
     int<lower=1> sample_size;
     vector[num_windows] pi_array;
     matrix[num_windows, n_bins] ld_mat;
+    int<lower=1> n_quad;
+    vector[n_quad] gl_nodes;
+    vector[n_quad] gl_weights;
 """
 
 _COMMON_TRANSFORMED_DATA = """\
@@ -79,7 +94,7 @@ _APPROX_TEMPLATE = """\
 functions {{
 // ---- shared.stan ----
 {shared_functions}
-// ---- constant.stan ----
+// ---- carrying_capacity.stan ----
 {model_functions}
 }}
 
@@ -88,30 +103,41 @@ functions {{
 {common_transformed_data}}}
 
 parameters {{
-    real log_Ne;
+    real log_Ne_c;
+    real log_Ne_a;
+    ordered[2] log_t_boundaries;
+    real alpha;
 {extra_parameters}
 }}
 
 transformed parameters {{
-    real<lower=0> Ne = exp(log_Ne);
+    real<lower=0> Ne_c = exp(log_Ne_c);
+    real<lower=0> Ne_a = exp(log_Ne_a);
+    real<lower=0> t0   = exp(log_t_boundaries[1]);
+    real<lower=0> t1   = exp(log_t_boundaries[2]);
 }}
 
 model {{
     // --- user prior ---
 {prior_block}
-
-    real mu_div = 4.0 * Ne * mutation_rate;
-    vector[n_bins] mu_ld = correct_ld_finite_sample(
-        mu_ld_constant(Ne, left_bins, right_bins), sample_size
+    real mu_div_val = mu_div_carrying_capacity(Ne_c, Ne_a, t0, t1, alpha, mutation_rate,
+                                               n_quad, gl_nodes, gl_weights);
+    vector[n_bins] mu_ld_val = correct_ld_finite_sample(
+        mu_ld_carrying_capacity(Ne_c, Ne_a, t0, t1, alpha,
+                                 left_bins, right_bins, n_quad, gl_nodes, gl_weights),
+        sample_size
     );
-    mean_div ~ normal(mu_div, sem_div);
-    target += normal_lpdf(mean_ld | mu_ld, sem_ld) / n_bins;
+    mean_div ~ normal(mu_div_val, sem_div);
+    target += normal_lpdf(mean_ld | mu_ld_val, sem_ld) / n_bins;
 }}
 
 generated quantities {{
-    real E_pi = 4.0 * Ne * mutation_rate;
+    real E_pi = mu_div_carrying_capacity(Ne_c, Ne_a, t0, t1, alpha, mutation_rate,
+                                          n_quad, gl_nodes, gl_weights);
     vector<lower=0>[n_bins] approx_ld = correct_ld_finite_sample(
-        mu_ld_constant(Ne, left_bins, right_bins), sample_size
+        mu_ld_carrying_capacity(Ne_c, Ne_a, t0, t1, alpha,
+                                 left_bins, right_bins, n_quad, gl_nodes, gl_weights),
+        sample_size
     );
     vector[num_windows] log_lik;
     for (w in 1:num_windows) {{
@@ -122,7 +148,7 @@ generated quantities {{
 """
 
 # ──────────────────────────────────────────────────────────────────────────
-# GP-surrogate model template — LD-bias formulation
+# GP-surrogate model template
 # ──────────────────────────────────────────────────────────────────────────
 
 _SURROGATE_TEMPLATE = """\
@@ -131,7 +157,7 @@ functions {{
 {gp_functions}
 // ---- shared.stan ----
 {shared_functions}
-// ---- constant.stan ----
+// ---- carrying_capacity.stan ----
 {model_functions}
 }}
 
@@ -142,13 +168,19 @@ functions {{
 {gp_surrogate_transformed_data}}}
 
 parameters {{
-    real log_Ne;
+    real log_Ne_c;
+    real log_Ne_a;
+    ordered[2] log_t_boundaries;
+    real alpha;
 {gp_surrogate_params}
 {extra_parameters}
 }}
 
 transformed parameters {{
-    real<lower=0> Ne = exp(log_Ne);
+    real<lower=0> Ne_c = exp(log_Ne_c);
+    real<lower=0> Ne_a = exp(log_Ne_a);
+    real<lower=0> t0   = exp(log_t_boundaries[1]);
+    real<lower=0> t1   = exp(log_t_boundaries[2]);
 {gp_surrogate_transformed_params}
 }}
 
@@ -156,20 +188,25 @@ model {{
 {gp_surrogate_model}
     // --- user prior ---
 {prior_block}
-
-    real mu_div = 4.0 * Ne * mutation_rate;
+    real mu_div_val = mu_div_carrying_capacity(Ne_c, Ne_a, t0, t1, alpha, mutation_rate,
+                                               n_quad, gl_nodes, gl_weights);
     vector[n_bins] approx_ld_val = correct_ld_finite_sample(
-        mu_ld_constant(Ne, left_bins, right_bins), sample_size
+        mu_ld_carrying_capacity(Ne_c, Ne_a, t0, t1, alpha,
+                                 left_bins, right_bins, n_quad, gl_nodes, gl_weights),
+        sample_size
     );
     vector[n_bins] corrected_ld = approx_ld_val .* (1.0 + gp_bias_ld);
-    mean_div ~ normal(mu_div, sem_div);
+    mean_div ~ normal(mu_div_val, sem_div);
     target += normal_lpdf(mean_ld | corrected_ld, sem_ld) / n_bins;
 }}
 
 generated quantities {{
-    real E_pi = 4.0 * Ne * mutation_rate;
+    real E_pi = mu_div_carrying_capacity(Ne_c, Ne_a, t0, t1, alpha, mutation_rate,
+                                          n_quad, gl_nodes, gl_weights);
     vector<lower=0>[n_bins] approx_ld = correct_ld_finite_sample(
-        mu_ld_constant(Ne, left_bins, right_bins), sample_size
+        mu_ld_carrying_capacity(Ne_c, Ne_a, t0, t1, alpha,
+                                 left_bins, right_bins, n_quad, gl_nodes, gl_weights),
+        sample_size
     );
     vector[n_bins] corrected_ld_gq = approx_ld .* (1.0 + gp_bias_ld);
     vector[num_windows] log_lik;
@@ -181,17 +218,14 @@ generated quantities {{
 """
 
 
-class ConstantDemography:
+class ExponentialCarryingCapacityDemography:
     """
-    Bayesian inference of effective population size under a constant-Ne model.
+    Bayesian inference of Ne under an exponential carrying-capacity model.
 
-    Maintains two internally compiled Stan programs:
+    Models a three-phase demography: recent constant → exponential growth
+    (backwards in time) → ancestral constant.
 
-    * **Approximate model** — uses a deterministic closed-form LD approximation.
-      Active when the synthetic dataset (``eval_points``) is empty.
-    * **GP-surrogate model** — augments the approximate model with a 1-D Hilbert-space
-      GP that corrects the LD predictions multiplicatively per bin.
-      Active once ``eval_points`` is non-empty.
+    Maintains two internally compiled Stan programs (approximate and GP-surrogate).
 
     Parameters
     ----------
@@ -205,7 +239,8 @@ class ConstantDemography:
     num_workers : int
     hsgp_c : float
     hsgp_m : int
-    prior : str
+    n_quad : int
+    prior : str or None
     extra_parameters : str
     """
 
@@ -222,6 +257,7 @@ class ConstantDemography:
         num_workers: int = 8,
         hsgp_c: float = 1.5,
         hsgp_m: int = 10,
+        n_quad: int = _DEFAULT_N_QUAD,
         prior: Optional[str] = None,
         extra_parameters: str = "",
     ):
@@ -237,25 +273,29 @@ class ConstantDemography:
         self._hsgp_c = float(hsgp_c)
         self._hsgp_m = int(hsgp_m)
 
-        n = len(self._diversity)
-        self._mean_ld = np.mean(self._ld, axis=0)
-        self._sem_ld = np.std(self._ld, axis=0, ddof=1) / np.sqrt(n)
+        self._prior = (
+            _default_prior(self._diversity, self._mutation_rate)
+            if prior is None else prior
+        )
+
+        gl_nodes, gl_weights = np.polynomial.legendre.leggauss(n_quad)
+        self._gl_nodes = gl_nodes
+        self._gl_weights = gl_weights
 
         self._eval_points: list[dict] = []
 
-        prior = prior if prior is not None else _default_prior(self._diversity, self._mutation_rate)
-        self._approx_model = self._compile_approx(prior, extra_parameters)
-        self._surrogate_model = self._compile_surrogate(prior, extra_parameters)
+        self._approx_model = self._compile_approx(self._prior, extra_parameters)
+        self._surrogate_model = self._compile_surrogate(self._prior, extra_parameters)
 
     # ──────────────────────────────────────────────────────────────────────
-    # Compilation
+    # Compilation helpers
     # ──────────────────────────────────────────────────────────────────────
 
     def _compile_approx(self, prior: str, extra_parameters: str):
         import cmdstanpy
 
         shared_fn = (_STAN_DIR / "functions" / "shared.stan").read_text()
-        model_fn = (_STAN_DIR / "functions" / "constant.stan").read_text()
+        model_fn = (_STAN_DIR / "functions" / "carrying_capacity.stan").read_text()
         code = _APPROX_TEMPLATE.format(
             shared_functions=shared_fn,
             model_functions=model_fn,
@@ -265,9 +305,9 @@ class ConstantDemography:
             prior_block=prior,
         )
         tmpdir = pathlib.Path(tempfile.mkdtemp())
-        (tmpdir / "constant_ne_approx.stan").write_text(code)
+        (tmpdir / "carrying_capacity_approx.stan").write_text(code)
         return cmdstanpy.CmdStanModel(
-            stan_file=str(tmpdir / "constant_ne_approx.stan"),
+            stan_file=str(tmpdir / "carrying_capacity_approx.stan"),
             **_THREADS_OPTS,
         )
 
@@ -276,7 +316,7 @@ class ConstantDemography:
 
         gp_fn = (_STAN_DIR / "gpbasisfun_functions.stan").read_text()
         shared_fn = (_STAN_DIR / "functions" / "shared.stan").read_text()
-        model_fn = (_STAN_DIR / "functions" / "constant.stan").read_text()
+        model_fn = (_STAN_DIR / "functions" / "carrying_capacity.stan").read_text()
         code = _SURROGATE_TEMPLATE.format(
             gp_functions=gp_fn,
             shared_functions=shared_fn,
@@ -292,9 +332,9 @@ class ConstantDemography:
             prior_block=prior,
         )
         tmpdir = pathlib.Path(tempfile.mkdtemp())
-        (tmpdir / "constant_ne_surrogate.stan").write_text(code)
+        (tmpdir / "carrying_capacity_surrogate.stan").write_text(code)
         return cmdstanpy.CmdStanModel(
-            stan_file=str(tmpdir / "constant_ne_surrogate.stan"),
+            stan_file=str(tmpdir / "carrying_capacity_surrogate.stan"),
             **_THREADS_OPTS,
         )
 
@@ -312,6 +352,9 @@ class ConstantDemography:
             "sample_size": self._num_samples,
             "pi_array": self._diversity,
             "ld_mat": self._ld,
+            "n_quad": len(self._gl_nodes),
+            "gl_nodes": self._gl_nodes,
+            "gl_weights": self._gl_weights,
         }
 
     def _surrogate_stan_data(self) -> dict:
@@ -372,8 +415,8 @@ class ConstantDemography:
         """
         Run one round of surrogate active learning.
 
-        Draws ``points_per_iter`` Ne values via Pathfinder, evaluates the
-        Monte Carlo LD at each draw, computes the relative LD bias and its
+        Draws ``points_per_iter`` parameter vectors via Pathfinder, evaluates
+        the Monte Carlo LD at each draw, computes the relative LD bias and its
         SE per bin, and appends the results to the internal dataset.
 
         Returns
@@ -395,11 +438,13 @@ class ConstantDemography:
 
         batch_size = self._num_workers
 
-        def _mc_eval(ne: float, mc_seed: int, outer) -> dict:
-            _, det_ld_raw = det.expected_constant(
-                ne,
-                self._left_bins,
-                self._right_bins,
+        def _mc_eval(
+            ne_c: float, ne_a: float, t0: float, t1: float, alpha: float,
+            mc_seed: int, outer,
+        ) -> dict:
+            _, det_ld_raw = det.expected_exponential_carrying_capacity(
+                ne_c, ne_a, t0, t1, alpha,
+                self._left_bins, self._right_bins,
                 self._mutation_rate,
                 sample_size=self._num_samples,
                 ploidy=2,
@@ -409,13 +454,10 @@ class ConstantDemography:
             seed_rng = np.random.default_rng(mc_seed)
             all_mc_ld: list[np.ndarray] = []
             while True:
-                _, mc_batch_raw = mc2.expected_constant(
-                    ne,
-                    self._left_bins,
-                    self._right_bins,
-                    self._mutation_rate,
-                    self._recombination_rate,
-                    self._sequence_length,
+                _, mc_batch_raw = mc2.expected_exponential_carrying_capacity(
+                    ne_c, ne_a, t0, t1, alpha,
+                    self._left_bins, self._right_bins,
+                    self._mutation_rate, self._recombination_rate, self._sequence_length,
                     self._num_samples,
                     random_seed=int(seed_rng.integers(2**31)),
                     num_replicates=batch_size,
@@ -428,7 +470,7 @@ class ConstantDemography:
                 mc_ld_rel = mc_ld_reps / det_ld - 1.0
                 rel_bias = mc_ld_rel.mean(axis=0)
                 eps_rel = mc_ld_rel.std(axis=0, ddof=1) / np.sqrt(N)
-                outer.set_postfix(Ne=f"{ne:,.0f}", rep=N, max_se=f"{eps_rel.max():.4f}")
+                outer.set_postfix(Ne_c=f"{ne_c:,.0f}", rep=N, max_se=f"{eps_rel.max():.4f}")
                 if eps_rel.max() <= max_tolerance or N >= max_replicates:
                     break
             return {"rel_bias": rel_bias, "eps_rel": eps_rel}
@@ -439,7 +481,15 @@ class ConstantDemography:
             seed=int(rng.integers(10_000)),
             show_console=False,
         )
-        map_inits = {"log_Ne": float(np.log(float(active_map.stan_variable("Ne"))))}
+        map_inits = {
+            "log_Ne_c": float(np.log(float(active_map.stan_variable("Ne_c")))),
+            "log_Ne_a": float(np.log(float(active_map.stan_variable("Ne_a")))),
+            "log_t_boundaries": np.log(np.array([
+                float(active_map.stan_variable("t0")),
+                float(active_map.stan_variable("t1")),
+            ])),
+            "alpha": float(active_map.stan_variable("alpha")),
+        }
         if self._eval_points:
             map_inits.update({
                 "gp_rho_r": float(active_map.stan_variable("gp_rho_r")),
@@ -457,18 +507,30 @@ class ConstantDemography:
             show_console=False,
         )
 
-        ne_draws = np.asarray(pf.stan_variable("Ne"))[:points_per_iter]
-        print(f"[Pathfinder n_eval={len(self._eval_points)}]  Ne={ne_draws.mean():,.0f}")
+        ne_c_draws = np.asarray(pf.stan_variable("Ne_c"))[:points_per_iter]
+        ne_a_draws = np.asarray(pf.stan_variable("Ne_a"))[:points_per_iter]
+        t0_draws = np.asarray(pf.stan_variable("t0"))[:points_per_iter]
+        t1_draws = np.asarray(pf.stan_variable("t1"))[:points_per_iter]
+        alpha_draws = np.asarray(pf.stan_variable("alpha"))[:points_per_iter]
+        print(
+            f"[Pathfinder n_eval={len(self._eval_points)}]  "
+            f"Ne_c={ne_c_draws.mean():,.0f}  Ne_a={ne_a_draws.mean():,.0f}  "
+            f"t0={t0_draws.mean():.1f}  t1={t1_draws.mean():.1f}  "
+            f"alpha={alpha_draws.mean():.3f}"
+        )
 
         iterator = tqdm(
-            enumerate(ne_draws),
-            total=len(ne_draws),
+            enumerate(zip(ne_c_draws, ne_a_draws, t0_draws, t1_draws, alpha_draws)),
+            total=points_per_iter,
             desc="Active learning",
             disable=not progress_bar,
         )
-        for i, ne in iterator:
+        for i, (ne_c, ne_a, t0, t1, alpha) in iterator:
             mc_seed = int(rng.integers(2**31))
-            self._eval_points.append(_mc_eval(float(ne), mc_seed, iterator))
+            self._eval_points.append(
+                _mc_eval(float(ne_c), float(ne_a), float(t0), float(t1), float(alpha),
+                         mc_seed, iterator)
+            )
 
         return pf
 
@@ -478,7 +540,11 @@ class ConstantDemography:
 
     def _extract_approx(self, fit) -> dict:
         return {
-            "Ne": float(_stan_vector(fit.stan_variable("Ne"))[0]),
+            "Ne_c": float(_stan_vector(fit.stan_variable("Ne_c"))[0]),
+            "Ne_a": float(_stan_vector(fit.stan_variable("Ne_a"))[0]),
+            "t0":   float(_stan_vector(fit.stan_variable("t0"))[0]),
+            "t1":   float(_stan_vector(fit.stan_variable("t1"))[0]),
+            "alpha": float(fit.stan_variable("alpha")),
             "E_pi": float(fit.stan_variable("E_pi")),
             "approx_ld": np.asarray(fit.stan_variable("approx_ld")),
             "log_lik": np.asarray(fit.stan_variable("log_lik")),
@@ -503,7 +569,8 @@ class ConstantDemography:
         Returns
         -------
         dict
-            Always: ``Ne``, ``E_pi``, ``approx_ld``, ``log_lik``.
+            Always: ``Ne_c``, ``Ne_a``, ``t0``, ``t1``, ``alpha``, ``E_pi``,
+            ``approx_ld``, ``log_lik``.
             With surrogate: additionally ``gp_bias_ld``, ``corrected_ld``,
             ``gp_rho_r``, ``gp_alpha``.
         """

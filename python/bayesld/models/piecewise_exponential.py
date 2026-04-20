@@ -1,18 +1,20 @@
 """
-Constant-Ne demographic inference model.
+Piecewise-exponential demographic inference model.
 
-``ConstantDemography`` internally maintains two Stan programs — a fast
-deterministic approximation and a GP-surrogate that learns the relative LD
-bias of that approximation — and switches between them automatically depending
-on whether a synthetic MC evaluation dataset has been accumulated via
-``surrogate_active_learning``.
+``PiecewiseExponentialDemography`` models::
 
-The GP surrogate fits the *relative* LD bias per bin::
+    Ne(t) = Ne_c * exp(-alpha * t)   for t < t0
+    Ne(t) = Ne_a                     for t >= t0
 
-    mc_ld(Ne, r) / det_ld(Ne, r) - 1  ~  GP(r)
+where ``alpha = log_fold_change / t0``.  The native parameter
+``log_fold_change`` captures the total log-ratio of Ne over the exponential
+phase and is far less correlated with ``t0`` than the raw rate ``alpha``.
 
-where ``r`` is the bin midpoint (standardised).  The corrected LD is then
-``det_ld * (1 + GP)``, which is dimensionless and scale-agnostic across bins.
+The ``expm1_over_x`` helper in ``piecewise_exponential.stan`` ensures the
+formula is numerically stable at alpha = 0 (constant-piecewise limit).
+
+Like ``PiecewiseConstantDemography``, it maintains an approximate model and
+a GP-surrogate model that corrects the LD predictions multiplicatively per bin.
 """
 
 import pathlib
@@ -28,16 +30,26 @@ from ._surrogate import (
     _GP_SURROGATE_PARAMS,
     _GP_SURROGATE_TRANSFORMED_DATA,
     _GP_SURROGATE_TRANSFORMED_PARAMS,
+    _stan_draw_matrix,
     _stan_vector,
 )
 
 _STAN_DIR = pathlib.Path(__file__).resolve().parent.parent.parent.parent / "stan"
 _THREADS_OPTS = {"cpp_options": {"STAN_THREADS": "true"}}
 
+_DEFAULT_N_QUAD = 16
+
+
 def _default_prior(diversity: np.ndarray, mutation_rate: float) -> str:
     ne_hat = float(np.mean(diversity)) / (4.0 * mutation_rate)
     log_ne_mu = float(np.log(ne_hat))
-    return f"    log_Ne ~ normal({log_ne_mu:.4f}, 1.0);"
+    return (
+        f"    log_Ne_c ~ normal({log_ne_mu:.4f}, 1.0);\n"
+        f"    log_Ne_a ~ normal({log_ne_mu:.4f}, 1.0);\n"
+        f"    log_t0   ~ normal({np.log(200.0):.4f}, 1.0);\n"
+        f"    log_fold_change ~ normal(0, 1.0);"
+    )
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # Stan source fragments
@@ -53,6 +65,9 @@ data {
     int<lower=1> sample_size;
     vector[num_windows] pi_array;
     matrix[num_windows, n_bins] ld_mat;
+    int<lower=1> n_quad;
+    vector[n_quad] gl_nodes;
+    vector[n_quad] gl_weights;
 """
 
 _COMMON_TRANSFORMED_DATA = """\
@@ -79,7 +94,7 @@ _APPROX_TEMPLATE = """\
 functions {{
 // ---- shared.stan ----
 {shared_functions}
-// ---- constant.stan ----
+// ---- piecewise_exponential.stan ----
 {model_functions}
 }}
 
@@ -88,30 +103,41 @@ functions {{
 {common_transformed_data}}}
 
 parameters {{
-    real log_Ne;
+    real log_Ne_c;
+    real log_Ne_a;
+    real log_t0;
+    real log_fold_change;
 {extra_parameters}
 }}
 
 transformed parameters {{
-    real<lower=0> Ne = exp(log_Ne);
+    real<lower=0> Ne_c = exp(log_Ne_c);
+    real<lower=0> Ne_a = exp(log_Ne_a);
+    real<lower=0> t0   = exp(log_t0);
+    real alpha = log_fold_change / t0;
 }}
 
 model {{
     // --- user prior ---
 {prior_block}
-
-    real mu_div = 4.0 * Ne * mutation_rate;
-    vector[n_bins] mu_ld = correct_ld_finite_sample(
-        mu_ld_constant(Ne, left_bins, right_bins), sample_size
+    real mu_div_val = mu_div_piecewise_exponential(Ne_c, Ne_a, t0, alpha, mutation_rate,
+                                                    n_quad, gl_nodes, gl_weights);
+    vector[n_bins] mu_ld_val = correct_ld_finite_sample(
+        mu_ld_piecewise_exponential(Ne_c, Ne_a, t0, alpha,
+                                     left_bins, right_bins, n_quad, gl_nodes, gl_weights),
+        sample_size
     );
-    mean_div ~ normal(mu_div, sem_div);
-    target += normal_lpdf(mean_ld | mu_ld, sem_ld) / n_bins;
+    mean_div ~ normal(mu_div_val, sem_div);
+    target += normal_lpdf(mean_ld | mu_ld_val, sem_ld) / n_bins;
 }}
 
 generated quantities {{
-    real E_pi = 4.0 * Ne * mutation_rate;
+    real E_pi = mu_div_piecewise_exponential(Ne_c, Ne_a, t0, alpha, mutation_rate,
+                                              n_quad, gl_nodes, gl_weights);
     vector<lower=0>[n_bins] approx_ld = correct_ld_finite_sample(
-        mu_ld_constant(Ne, left_bins, right_bins), sample_size
+        mu_ld_piecewise_exponential(Ne_c, Ne_a, t0, alpha,
+                                     left_bins, right_bins, n_quad, gl_nodes, gl_weights),
+        sample_size
     );
     vector[num_windows] log_lik;
     for (w in 1:num_windows) {{
@@ -122,7 +148,7 @@ generated quantities {{
 """
 
 # ──────────────────────────────────────────────────────────────────────────
-# GP-surrogate model template — LD-bias formulation
+# GP-surrogate model template
 # ──────────────────────────────────────────────────────────────────────────
 
 _SURROGATE_TEMPLATE = """\
@@ -131,7 +157,7 @@ functions {{
 {gp_functions}
 // ---- shared.stan ----
 {shared_functions}
-// ---- constant.stan ----
+// ---- piecewise_exponential.stan ----
 {model_functions}
 }}
 
@@ -142,13 +168,19 @@ functions {{
 {gp_surrogate_transformed_data}}}
 
 parameters {{
-    real log_Ne;
+    real log_Ne_c;
+    real log_Ne_a;
+    real log_t0;
+    real log_fold_change;
 {gp_surrogate_params}
 {extra_parameters}
 }}
 
 transformed parameters {{
-    real<lower=0> Ne = exp(log_Ne);
+    real<lower=0> Ne_c = exp(log_Ne_c);
+    real<lower=0> Ne_a = exp(log_Ne_a);
+    real<lower=0> t0   = exp(log_t0);
+    real alpha = log_fold_change / t0;
 {gp_surrogate_transformed_params}
 }}
 
@@ -156,20 +188,25 @@ model {{
 {gp_surrogate_model}
     // --- user prior ---
 {prior_block}
-
-    real mu_div = 4.0 * Ne * mutation_rate;
+    real mu_div_val = mu_div_piecewise_exponential(Ne_c, Ne_a, t0, alpha, mutation_rate,
+                                                    n_quad, gl_nodes, gl_weights);
     vector[n_bins] approx_ld_val = correct_ld_finite_sample(
-        mu_ld_constant(Ne, left_bins, right_bins), sample_size
+        mu_ld_piecewise_exponential(Ne_c, Ne_a, t0, alpha,
+                                     left_bins, right_bins, n_quad, gl_nodes, gl_weights),
+        sample_size
     );
     vector[n_bins] corrected_ld = approx_ld_val .* (1.0 + gp_bias_ld);
-    mean_div ~ normal(mu_div, sem_div);
+    mean_div ~ normal(mu_div_val, sem_div);
     target += normal_lpdf(mean_ld | corrected_ld, sem_ld) / n_bins;
 }}
 
 generated quantities {{
-    real E_pi = 4.0 * Ne * mutation_rate;
+    real E_pi = mu_div_piecewise_exponential(Ne_c, Ne_a, t0, alpha, mutation_rate,
+                                              n_quad, gl_nodes, gl_weights);
     vector<lower=0>[n_bins] approx_ld = correct_ld_finite_sample(
-        mu_ld_constant(Ne, left_bins, right_bins), sample_size
+        mu_ld_piecewise_exponential(Ne_c, Ne_a, t0, alpha,
+                                     left_bins, right_bins, n_quad, gl_nodes, gl_weights),
+        sample_size
     );
     vector[n_bins] corrected_ld_gq = approx_ld .* (1.0 + gp_bias_ld);
     vector[num_windows] log_lik;
@@ -181,17 +218,14 @@ generated quantities {{
 """
 
 
-class ConstantDemography:
+class PiecewiseExponentialDemography:
     """
-    Bayesian inference of effective population size under a constant-Ne model.
+    Bayesian inference of Ne under a piecewise-exponential demographic model.
 
-    Maintains two internally compiled Stan programs:
+    Models Ne(t) = Ne_c * exp(-alpha * t) for t < t0, then Ne_a for t >= t0.
+    alpha = 0 recovers a two-epoch constant model.
 
-    * **Approximate model** — uses a deterministic closed-form LD approximation.
-      Active when the synthetic dataset (``eval_points``) is empty.
-    * **GP-surrogate model** — augments the approximate model with a 1-D Hilbert-space
-      GP that corrects the LD predictions multiplicatively per bin.
-      Active once ``eval_points`` is non-empty.
+    Maintains two internally compiled Stan programs (approximate and GP-surrogate).
 
     Parameters
     ----------
@@ -205,7 +239,8 @@ class ConstantDemography:
     num_workers : int
     hsgp_c : float
     hsgp_m : int
-    prior : str
+    n_quad : int
+    prior : str or None
     extra_parameters : str
     """
 
@@ -222,6 +257,7 @@ class ConstantDemography:
         num_workers: int = 8,
         hsgp_c: float = 1.5,
         hsgp_m: int = 10,
+        n_quad: int = _DEFAULT_N_QUAD,
         prior: Optional[str] = None,
         extra_parameters: str = "",
     ):
@@ -229,7 +265,9 @@ class ConstantDemography:
         self._ld = np.asarray(ld, dtype=float)
         self._mutation_rate = float(mutation_rate)
         self._recombination_rate = float(recombination_rate)
-        self._sequence_length = float(sequence_length) if sequence_length is not None else None
+        self._sequence_length = (
+            float(sequence_length) if sequence_length is not None else None
+        )
         self._num_samples = int(num_samples)
         self._left_bins = np.asarray(left_bins, dtype=float)
         self._right_bins = np.asarray(right_bins, dtype=float)
@@ -237,25 +275,30 @@ class ConstantDemography:
         self._hsgp_c = float(hsgp_c)
         self._hsgp_m = int(hsgp_m)
 
-        n = len(self._diversity)
-        self._mean_ld = np.mean(self._ld, axis=0)
-        self._sem_ld = np.std(self._ld, axis=0, ddof=1) / np.sqrt(n)
+        self._prior = (
+            _default_prior(self._diversity, self._mutation_rate)
+            if prior is None
+            else prior
+        )
+
+        gl_nodes, gl_weights = np.polynomial.legendre.leggauss(n_quad)
+        self._gl_nodes = gl_nodes
+        self._gl_weights = gl_weights
 
         self._eval_points: list[dict] = []
 
-        prior = prior if prior is not None else _default_prior(self._diversity, self._mutation_rate)
-        self._approx_model = self._compile_approx(prior, extra_parameters)
-        self._surrogate_model = self._compile_surrogate(prior, extra_parameters)
+        self._approx_model = self._compile_approx(self._prior, extra_parameters)
+        self._surrogate_model = self._compile_surrogate(self._prior, extra_parameters)
 
     # ──────────────────────────────────────────────────────────────────────
-    # Compilation
+    # Compilation helpers
     # ──────────────────────────────────────────────────────────────────────
 
     def _compile_approx(self, prior: str, extra_parameters: str):
         import cmdstanpy
 
         shared_fn = (_STAN_DIR / "functions" / "shared.stan").read_text()
-        model_fn = (_STAN_DIR / "functions" / "constant.stan").read_text()
+        model_fn = (_STAN_DIR / "functions" / "piecewise_exponential.stan").read_text()
         code = _APPROX_TEMPLATE.format(
             shared_functions=shared_fn,
             model_functions=model_fn,
@@ -265,9 +308,9 @@ class ConstantDemography:
             prior_block=prior,
         )
         tmpdir = pathlib.Path(tempfile.mkdtemp())
-        (tmpdir / "constant_ne_approx.stan").write_text(code)
+        (tmpdir / "piecewise_exponential_approx.stan").write_text(code)
         return cmdstanpy.CmdStanModel(
-            stan_file=str(tmpdir / "constant_ne_approx.stan"),
+            stan_file=str(tmpdir / "piecewise_exponential_approx.stan"),
             **_THREADS_OPTS,
         )
 
@@ -276,7 +319,7 @@ class ConstantDemography:
 
         gp_fn = (_STAN_DIR / "gpbasisfun_functions.stan").read_text()
         shared_fn = (_STAN_DIR / "functions" / "shared.stan").read_text()
-        model_fn = (_STAN_DIR / "functions" / "constant.stan").read_text()
+        model_fn = (_STAN_DIR / "functions" / "piecewise_exponential.stan").read_text()
         code = _SURROGATE_TEMPLATE.format(
             gp_functions=gp_fn,
             shared_functions=shared_fn,
@@ -292,9 +335,9 @@ class ConstantDemography:
             prior_block=prior,
         )
         tmpdir = pathlib.Path(tempfile.mkdtemp())
-        (tmpdir / "constant_ne_surrogate.stan").write_text(code)
+        (tmpdir / "piecewise_exponential_surrogate.stan").write_text(code)
         return cmdstanpy.CmdStanModel(
-            stan_file=str(tmpdir / "constant_ne_surrogate.stan"),
+            stan_file=str(tmpdir / "piecewise_exponential_surrogate.stan"),
             **_THREADS_OPTS,
         )
 
@@ -312,6 +355,9 @@ class ConstantDemography:
             "sample_size": self._num_samples,
             "pi_array": self._diversity,
             "ld_mat": self._ld,
+            "n_quad": len(self._gl_nodes),
+            "gl_nodes": self._gl_nodes,
+            "gl_weights": self._gl_weights,
         }
 
     def _surrogate_stan_data(self) -> dict:
@@ -329,7 +375,9 @@ class ConstantDemography:
         return data
 
     def _active_data(self) -> dict:
-        return self._surrogate_stan_data() if self._eval_points else self._base_stan_data()
+        return (
+            self._surrogate_stan_data() if self._eval_points else self._base_stan_data()
+        )
 
     def _active_model(self):
         return self._surrogate_model if self._eval_points else self._approx_model
@@ -372,10 +420,6 @@ class ConstantDemography:
         """
         Run one round of surrogate active learning.
 
-        Draws ``points_per_iter`` Ne values via Pathfinder, evaluates the
-        Monte Carlo LD at each draw, computes the relative LD bias and its
-        SE per bin, and appends the results to the internal dataset.
-
         Returns
         -------
         cmdstanpy.CmdStanPathfinder
@@ -395,9 +439,19 @@ class ConstantDemography:
 
         batch_size = self._num_workers
 
-        def _mc_eval(ne: float, mc_seed: int, outer) -> dict:
-            _, det_ld_raw = det.expected_constant(
-                ne,
+        def _mc_eval(
+            ne_c: float,
+            ne_a: float,
+            t0: float,
+            alpha: float,
+            mc_seed: int,
+            outer,
+        ) -> dict:
+            _, det_ld_raw = det.expected_piecewise_exponential(
+                ne_c,
+                ne_a,
+                t0,
+                alpha,
                 self._left_bins,
                 self._right_bins,
                 self._mutation_rate,
@@ -409,8 +463,11 @@ class ConstantDemography:
             seed_rng = np.random.default_rng(mc_seed)
             all_mc_ld: list[np.ndarray] = []
             while True:
-                _, mc_batch_raw = mc2.expected_constant(
-                    ne,
+                _, mc_batch_raw = mc2.expected_piecewise_exponential(
+                    ne_c,
+                    ne_a,
+                    t0,
+                    alpha,
                     self._left_bins,
                     self._right_bins,
                     self._mutation_rate,
@@ -428,47 +485,94 @@ class ConstantDemography:
                 mc_ld_rel = mc_ld_reps / det_ld - 1.0
                 rel_bias = mc_ld_rel.mean(axis=0)
                 eps_rel = mc_ld_rel.std(axis=0, ddof=1) / np.sqrt(N)
-                outer.set_postfix(Ne=f"{ne:,.0f}", rep=N, max_se=f"{eps_rel.max():.4f}")
+                outer.set_postfix(
+                    Ne_c=f"{ne_c:,.0f}", rep=N, max_se=f"{eps_rel.max():.4f}"
+                )
                 if eps_rel.max() <= max_tolerance or N >= max_replicates:
                     break
             return {"rel_bias": rel_bias, "eps_rel": eps_rel}
 
         # Anchor Pathfinder at the MAP of whichever model is active.
-        active_map = self._active_model().optimize(
-            data=self._active_data(),
-            seed=int(rng.integers(10_000)),
-            show_console=False,
-        )
-        map_inits = {"log_Ne": float(np.log(float(active_map.stan_variable("Ne"))))}
-        if self._eval_points:
-            map_inits.update({
-                "gp_rho_r": float(active_map.stan_variable("gp_rho_r")),
-                "gp_alpha": float(active_map.stan_variable("gp_alpha")),
-                "beta_r": np.asarray(active_map.stan_variable("beta_r")).tolist(),
-            })
+        try:
+            active_map = self._active_model().optimize(
+                data=self._active_data(),
+                seed=int(rng.integers(10_000)),
+                show_console=False,
+            )
+            map_inits = {
+                "log_Ne_c": float(np.log(float(active_map.stan_variable("Ne_c")))),
+                "log_Ne_a": float(np.log(float(active_map.stan_variable("Ne_a")))),
+                "log_t0": float(np.log(float(active_map.stan_variable("t0")))),
+                "log_fold_change": float(active_map.stan_variable("log_fold_change")),
+            }
+            if self._eval_points:
+                map_inits.update(
+                    {
+                        "gp_rho_r": float(active_map.stan_variable("gp_rho_r")),
+                        "gp_alpha": float(active_map.stan_variable("gp_alpha")),
+                        "beta_r": np.asarray(
+                            active_map.stan_variable("beta_r")
+                        ).tolist(),
+                    }
+                )
+        except RuntimeError:
+            warnings.warn(
+                "Surrogate MAP failed; Pathfinder will use default inits.",
+                UserWarning,
+                stacklevel=2,
+            )
+            map_inits = None
 
         pf_seed = int(rng.integers(10_000))
-        pf = self._active_model().pathfinder(
+        pf_kwargs = dict(
             data=self._active_data(),
             draws=points_per_iter,
             seed=pf_seed,
             num_threads=self._num_workers,
-            inits=map_inits,
             show_console=False,
         )
+        if map_inits is not None:
+            pf_kwargs["inits"] = map_inits
+        try:
+            pf = self._active_model().pathfinder(**pf_kwargs)
+        except RuntimeError:
+            warnings.warn(
+                "Pathfinder failed with MAP inits; retrying with defaults.",
+                UserWarning,
+                stacklevel=2,
+            )
+            pf_kwargs.pop("inits", None)
+            pf_kwargs["seed"] = pf_seed + 1
+            pf = self._active_model().pathfinder(**pf_kwargs)
 
-        ne_draws = np.asarray(pf.stan_variable("Ne"))[:points_per_iter]
-        print(f"[Pathfinder n_eval={len(self._eval_points)}]  Ne={ne_draws.mean():,.0f}")
+        ne_c_draws = np.asarray(pf.stan_variable("Ne_c"))[:points_per_iter]
+        ne_a_draws = np.asarray(pf.stan_variable("Ne_a"))[:points_per_iter]
+        t0_draws = np.asarray(pf.stan_variable("t0"))[:points_per_iter]
+        alpha_draws = np.asarray(pf.stan_variable("alpha"))[:points_per_iter]
+        print(
+            f"[Pathfinder n_eval={len(self._eval_points)}]  "
+            f"Ne_c={ne_c_draws.mean():,.0f}  Ne_a={ne_a_draws.mean():,.0f}  "
+            f"t0={t0_draws.mean():.1f}  alpha={alpha_draws.mean():.4f}"
+        )
 
         iterator = tqdm(
-            enumerate(ne_draws),
-            total=len(ne_draws),
+            enumerate(zip(ne_c_draws, ne_a_draws, t0_draws, alpha_draws)),
+            total=points_per_iter,
             desc="Active learning",
             disable=not progress_bar,
         )
-        for i, ne in iterator:
+        for i, (ne_c, ne_a, t0, alpha) in iterator:
             mc_seed = int(rng.integers(2**31))
-            self._eval_points.append(_mc_eval(float(ne), mc_seed, iterator))
+            self._eval_points.append(
+                _mc_eval(
+                    float(ne_c),
+                    float(ne_a),
+                    float(t0),
+                    float(alpha),
+                    mc_seed,
+                    iterator,
+                )
+            )
 
         return pf
 
@@ -478,7 +582,11 @@ class ConstantDemography:
 
     def _extract_approx(self, fit) -> dict:
         return {
-            "Ne": float(_stan_vector(fit.stan_variable("Ne"))[0]),
+            "Ne_c": float(_stan_vector(fit.stan_variable("Ne_c"))[0]),
+            "Ne_a": float(_stan_vector(fit.stan_variable("Ne_a"))[0]),
+            "t0": float(_stan_vector(fit.stan_variable("t0"))[0]),
+            "alpha": float(fit.stan_variable("alpha")),
+            "log_fold_change": float(fit.stan_variable("log_fold_change")),
             "E_pi": float(fit.stan_variable("E_pi")),
             "approx_ld": np.asarray(fit.stan_variable("approx_ld")),
             "log_lik": np.asarray(fit.stan_variable("log_lik")),
@@ -503,12 +611,17 @@ class ConstantDemography:
         Returns
         -------
         dict
-            Always: ``Ne``, ``E_pi``, ``approx_ld``, ``log_lik``.
+            Always: ``Ne_c``, ``Ne_a``, ``t0``, ``alpha``,
+            ``log_fold_change``, ``E_pi``, ``approx_ld``, ``log_lik``.
             With surrogate: additionally ``gp_bias_ld``, ``corrected_ld``,
             ``gp_rho_r``, ``gp_alpha``.
         """
         fit = self._active_model().optimize(data=self._active_data(), **kwargs)
-        return self._extract_surrogate(fit) if self._eval_points else self._extract_approx(fit)
+        return (
+            self._extract_surrogate(fit)
+            if self._eval_points
+            else self._extract_approx(fit)
+        )
 
     def pathfinder(self, **kwargs):
         """Run Pathfinder variational inference."""

@@ -258,6 +258,70 @@ def expected_piecewise_exponential(
     )
 
 
+def expected_exponential_carrying_capacity(
+    Ne_c,
+    Ne_a,
+    t0,
+    t1,
+    alpha,
+    left_bins,
+    right_bins,
+    mutation_rate,
+    recombination_rate,
+    sequence_length,
+    sample_size,
+    random_seed,
+    num_replicates=1,
+    ploidy=2,
+    model="hudson",
+    num_workers=-1,
+):
+    """
+    Expected genetic diversity and LD under an exponential carrying-capacity demography via MC.
+
+    Ne(t) = Ne_c                          for t < t0
+    Ne(t) = Ne_c * exp(-alpha * (t - t0)) for t0 <= t < t1
+    Ne(t) = Ne_a                          for t >= t1
+
+    Parameters
+    ----------
+    Ne_c : float  — contemporary Ne (recent constant phase)
+    Ne_a : float  — ancestral Ne
+    t0 : float    — start of exponential phase (generations ago)
+    t1 : float    — end of exponential phase (generations ago), t1 > t0
+    alpha : float — exponential rate
+    left_bins, right_bins : array-like  — bin edges in Morgans
+    mutation_rate, recombination_rate, sequence_length : float
+    sample_size : int
+    random_seed : int
+    num_replicates : int
+    ploidy : int
+    model : str
+    num_workers : int  — joblib parallel workers (-1 = all cores)
+
+    Returns
+    -------
+    pi_replicates : ndarray (num_replicates,)
+    ld_replicates : ndarray (num_replicates, num_bins)
+    """
+    left_bins = np.asarray(left_bins)
+    right_bins = np.asarray(right_bins)
+
+    def build_demography(ne_c, ne_a, t0_, t1_, alpha_):
+        d = msprime.Demography()
+        d.add_population(name="pop0", initial_size=ne_c, growth_rate=0)
+        d.add_population_parameters_change(time=t0_, initial_size=ne_c, growth_rate=alpha_)
+        d.add_population_parameters_change(time=t1_, initial_size=ne_a, growth_rate=0)
+        return d
+
+    return _parallel_mc(
+        build_demography, (Ne_c, Ne_a, t0, t1, alpha),
+        left_bins, right_bins, mutation_rate, recombination_rate,
+        sequence_length, sample_size, ploidy, model,
+        random_seed, num_replicates, num_workers,
+    )
+
+
 def expected_piecewise_constant(
     Ne_values,
     t_boundaries,
