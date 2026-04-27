@@ -118,7 +118,7 @@ def data_from_tree_sequence(
     }
 
 
-from . import models, montecarlo, branch
+from . import models, montecarlo
 from .models import ConstantDemography
 
 __doc__ = _bayesld.__doc__
