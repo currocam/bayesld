@@ -20,7 +20,7 @@ import numpy as np
 
 _GP_SURROGATE_DATA = """\
     // ── GP surrogate evaluation dataset (LD-bias) ──────────────────────────
-    int<lower=2> n_eval;
+    int<lower=1> n_eval;
     matrix[n_eval, n_bins] eval_rel_bias;
     matrix[n_eval, n_bins] eval_eps_rel;
     real<lower=0> hsgp_c;
@@ -46,15 +46,15 @@ _GP_SURROGATE_PARAMS = """\
 _GP_SURROGATE_TRANSFORMED_PARAMS = """\
     vector[hsgp_m] spd_r = diagSPD_EQ(gp_alpha, gp_rho_r, L_r, hsgp_m);
     vector[n_bins] gp_bias_ld = PHI_r * (spd_r .* beta_r);
-    matrix[n_eval, n_bins] f_eval = rep_matrix(to_row_vector(gp_bias_ld), n_eval);
 """
 
 _GP_SURROGATE_MODEL = """\
     gp_rho_r ~ inv_gamma(5, 5);
     gp_alpha ~ normal(0, 0.005);
     beta_r ~ std_normal();
-    for (i in 1:n_eval)
-        eval_rel_bias[i] ~ normal(f_eval[i], eval_eps_rel[i]);
+    to_vector(eval_rel_bias) ~ normal(
+        to_vector(rep_matrix(to_row_vector(gp_bias_ld), n_eval)),
+        to_vector(eval_eps_rel));
 """
 
 

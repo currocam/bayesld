@@ -1,4 +1,6 @@
 /target
+__marimo__/
+.claude/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

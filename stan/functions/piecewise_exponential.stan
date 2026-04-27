@@ -25,7 +25,37 @@ real S_u_piecewise_exponential(real u, real Ne_c, real Ne_a, real t0, real alpha
     return piece1 + piece2;
 }
 
-// Expected LD per bin via GL quadrature over bin width.
+// map_rect shard: computes raw LD for a single bin (parallel across bins).
+// phi = [Ne_c, Ne_a, t0, alpha]
+// x_r = [left_bin, right_bin, gl_nodes[1..n_quad], gl_weights[1..n_quad]]
+// x_i = [n_quad]
+vector mu_ld_shard_pe(vector phi, vector theta,
+                      data array[] real x_r, data array[] int x_i) {
+    real Ne_c  = phi[1];
+    real Ne_a  = phi[2];
+    real t0    = phi[3];
+    real alpha = phi[4];
+    int n_quad = x_i[1];
+
+    vector[n_quad] gl_nodes;
+    vector[n_quad] gl_weights;
+    for (k in 1:n_quad) {
+        gl_nodes[k]   = x_r[2 + k];
+        gl_weights[k] = x_r[2 + n_quad + k];
+    }
+
+    real mid = (x_r[1] + x_r[2]) / 2.0;
+    real hw  = (x_r[2] - x_r[1]) / 2.0;
+    real s = 0.0;
+    for (k in 1:n_quad) {
+        real u_k = mid + hw * gl_nodes[k];
+        s += gl_weights[k] * S_u_piecewise_exponential(u_k, Ne_c, Ne_a, t0, alpha,
+                                                        n_quad, gl_nodes, gl_weights);
+    }
+    return [0.5 * s]';
+}
+
+// Expected LD per bin via GL quadrature over bin width (serial fallback).
 vector mu_ld_piecewise_exponential(real Ne_c, real Ne_a, real t0, real alpha,
                                    vector left_bins, vector right_bins,
                                    int n_quad, vector gl_nodes, vector gl_weights) {
