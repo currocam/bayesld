@@ -11,7 +11,7 @@ def _():
     import arviz_base as az
     import matplotlib.pyplot as plt
     from bayesld import linear_bins
-    from bayesld import montecarlo2 as mc2
+    from bayesld import montecarlo as mc2
     from bayesld.models import ConstantDemography
 
     return ConstantDemography, az, linear_bins, mc2, mo, np, plt
@@ -182,14 +182,13 @@ def _(mo, model):
 @app.cell
 def _(mo, model):
     mo.stop(model is None)
-    n_rounds = 3
-    with mo.status.spinner(f"Running {n_rounds} active learning rounds…"):
-        for _ in range(n_rounds):
-            model.surrogate_active_learning(
-                points_per_iter=3,
-                max_tolerance=0.001,
-                seed=None,
-            )
+    with mo.status.spinner("Learning surrogate likelihood…"):
+        model.learn_surrogate_likelihood(
+            n_map_iterations=5,
+            n_nuts_samples=5,
+            max_tolerance=0.001,
+            seed=None,
+        )
     n_eval_points = len(model.eval_points)
     mo.md(f"Surrogate dataset: **{n_eval_points}** MC evaluation points accumulated.")
     return

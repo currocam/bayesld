@@ -1,4 +1,4 @@
-use bayesld::{LinkageDisequilibrium, SiteStatistics, StreamingStatsDiploid};
+use bayesld::{linkage_disequilibrium, Ploidy, SiteStatistics};
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rand::Rng;
 
@@ -35,18 +35,11 @@ fn bench_linkage_disequilibrium(c: &mut Criterion) {
         let genotypes2 = simulate_diploid_genotypes(*size);
         let stats1 = SiteStatistics::from_diploid(&genotypes1);
         let stats2 = SiteStatistics::from_diploid(&genotypes2);
-        let normalized1 =
-            StreamingStatsDiploid::standardize(&genotypes1, stats1.allele_frequency);
-        let normalized2 =
-            StreamingStatsDiploid::standardize(&genotypes2, stats2.allele_frequency);
+        let normalized1 = Ploidy::Diploid.standardize(&genotypes1, stats1.allele_frequency);
+        let normalized2 = Ploidy::Diploid.standardize(&genotypes2, stats2.allele_frequency);
 
         group.bench_with_input(BenchmarkId::new("SIMD", size), size, |b, _| {
-            b.iter(|| {
-                LinkageDisequilibrium::from_diploid(
-                    black_box(&normalized1),
-                    black_box(&normalized2),
-                )
-            });
+            b.iter(|| linkage_disequilibrium(black_box(&normalized1), black_box(&normalized2)));
         });
 
         group.bench_with_input(BenchmarkId::new("Scalar", size), size, |b, _| {

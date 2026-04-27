@@ -145,16 +145,3 @@ class TestMonteCarloRegression:
         np.testing.assert_allclose(float(pi_vec.mean()), ref["pi_mean"])
         np.testing.assert_allclose(np.asarray(ld_mat.mean(axis=0)), ref["ld_mean"])
 
-    def test_secondary_introduction(self, reference):
-        pi_vec, ld_mat = montecarlo.expected_secondary_introduction(
-            Ne_1=3000.0,
-            Ne_2=3000.0,
-            Ne_a=6000.0,
-            t0=20.0,
-            t1=60.0,
-            migration_rate=0.1,
-            **MC_KWARGS,
-        )
-        ref = reference["montecarlo"]["secondary_introduction"]
-        np.testing.assert_allclose(float(pi_vec.mean()), ref["pi_mean"])
-        np.testing.assert_allclose(np.asarray(ld_mat.mean(axis=0)), ref["ld_mean"])

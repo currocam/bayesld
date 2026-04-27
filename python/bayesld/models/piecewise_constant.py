@@ -76,6 +76,7 @@ transformed data {
         sigma_ld[b] = sd(col(ld_mat, b));
         sem_ld[b]   = sigma_ld[b] / sqrt(num_windows);
     }
+    real log_ne_offset = log(mean_div / (4.0 * mutation_rate));
 """
 
 # Substitution fragments for free vs. fixed time boundaries.
@@ -106,34 +107,29 @@ functions {{
 {common_transformed_data}}}
 
 parameters {{
-    vector[n_epochs] log_Ne_values;
+    vector<offset=log_ne_offset>[n_epochs] log_Ne_values;
 {t_params}{extra_parameters}
 }}
 
 transformed parameters {{
     vector<lower=0>[n_epochs] Ne_values = exp(log_Ne_values);
-{t_transformed}}}
+{t_transformed}
+    real E_pi = mu_div_piecewise_constant(n_epochs, Ne_values, t_boundaries, mutation_rate);
+    vector[n_bins] approx_ld = correct_ld_finite_sample(
+        mu_ld_piecewise_constant(n_epochs, Ne_values, t_boundaries,
+                                  left_bins, right_bins, n_quad, gl_nodes, gl_weights),
+        sample_size
+    );
+}}
 
 model {{
     // --- user prior ---
 {prior_block}
-    real mu_div_val = mu_div_piecewise_constant(n_epochs, Ne_values, t_boundaries, mutation_rate);
-    vector[n_bins] mu_ld_val = correct_ld_finite_sample(
-        mu_ld_piecewise_constant(n_epochs, Ne_values, t_boundaries,
-                                  left_bins, right_bins, n_quad, gl_nodes, gl_weights),
-        sample_size
-    );
-    mean_div ~ normal(mu_div_val, sem_div);
-    target += normal_lpdf(mean_ld | mu_ld_val, sem_ld) / n_bins;
+    mean_div ~ normal(E_pi, sem_div);
+    target += normal_lpdf(mean_ld | approx_ld, sem_ld) / n_bins;
 }}
 
 generated quantities {{
-    real E_pi = mu_div_piecewise_constant(n_epochs, Ne_values, t_boundaries, mutation_rate);
-    vector<lower=0>[n_bins] approx_ld = correct_ld_finite_sample(
-        mu_ld_piecewise_constant(n_epochs, Ne_values, t_boundaries,
-                                  left_bins, right_bins, n_quad, gl_nodes, gl_weights),
-        sample_size
-    );
     vector[num_windows] log_lik;
     for (w in 1:num_windows) {{
         log_lik[w] = normal_lpdf(pi_array[w] | E_pi, sigma_div)
@@ -167,7 +163,7 @@ functions {{
 {gp_surrogate_transformed_data}}}
 
 parameters {{
-    vector[n_epochs] log_Ne_values;
+    vector<offset=log_ne_offset>[n_epochs] log_Ne_values;
 {t_params}
 {gp_surrogate_params}
 {extra_parameters}
@@ -177,35 +173,28 @@ transformed parameters {{
     vector<lower=0>[n_epochs] Ne_values = exp(log_Ne_values);
 {t_transformed}
 {gp_surrogate_transformed_params}
+    real E_pi = mu_div_piecewise_constant(n_epochs, Ne_values, t_boundaries, mutation_rate);
+    vector[n_bins] approx_ld = correct_ld_finite_sample(
+        mu_ld_piecewise_constant(n_epochs, Ne_values, t_boundaries,
+                                  left_bins, right_bins, n_quad, gl_nodes, gl_weights),
+        sample_size
+    );
+    vector[n_bins] corrected_ld = approx_ld .* (1.0 + gp_bias_ld);
 }}
 
 model {{
 {gp_surrogate_model}
     // --- user prior ---
 {prior_block}
-    real mu_div_val = mu_div_piecewise_constant(n_epochs, Ne_values, t_boundaries, mutation_rate);
-    vector[n_bins] approx_ld_val = correct_ld_finite_sample(
-        mu_ld_piecewise_constant(n_epochs, Ne_values, t_boundaries,
-                                  left_bins, right_bins, n_quad, gl_nodes, gl_weights),
-        sample_size
-    );
-    vector[n_bins] corrected_ld = approx_ld_val .* (1.0 + gp_bias_ld);
-    mean_div ~ normal(mu_div_val, sem_div);
+    mean_div ~ normal(E_pi, sem_div);
     target += normal_lpdf(mean_ld | corrected_ld, sem_ld) / n_bins;
 }}
 
 generated quantities {{
-    real E_pi = mu_div_piecewise_constant(n_epochs, Ne_values, t_boundaries, mutation_rate);
-    vector<lower=0>[n_bins] approx_ld = correct_ld_finite_sample(
-        mu_ld_piecewise_constant(n_epochs, Ne_values, t_boundaries,
-                                  left_bins, right_bins, n_quad, gl_nodes, gl_weights),
-        sample_size
-    );
-    vector[n_bins] corrected_ld_gq = approx_ld .* (1.0 + gp_bias_ld);
     vector[num_windows] log_lik;
     for (w in 1:num_windows) {{
         log_lik[w] = normal_lpdf(pi_array[w] | E_pi, sigma_div)
-                   + normal_lpdf(to_vector(ld_mat[w]) | corrected_ld_gq, sigma_ld) / n_bins;
+                   + normal_lpdf(to_vector(ld_mat[w]) | corrected_ld, sigma_ld) / n_bins;
     }}
 }}
 """
@@ -479,6 +468,7 @@ class PiecewiseConstantDemography:
         points_per_iter: int = 50,
         max_tolerance: float = 0.01,
         max_replicates: int = 512,
+        nuts_warmup: int = 500,
         seed: Optional[int] = None,
         progress_bar: bool = True,
     ):
@@ -502,7 +492,7 @@ class PiecewiseConstantDemography:
         from tqdm.auto import tqdm
 
         from .. import deterministic as det
-        from .. import montecarlo2 as mc2
+        from .. import montecarlo as mc2
 
         rng = np.random.default_rng(seed)
 
@@ -552,41 +542,75 @@ class PiecewiseConstantDemography:
             return {"rel_bias": rel_bias, "eps_rel": eps_rel}
 
         # Anchor Pathfinder at the MAP of whichever model is active.
-        active_map = self._active_model().optimize(
-            data=self._active_data(),
-            seed=int(rng.integers(10_000)),
-            show_console=False,
-        )
-        map_inits = {"log_Ne_values": np.log(active_map.stan_variable("Ne_values"))}
-        if self._fixed_t is None:
-            map_inits["log_t_boundaries"] = np.log(
-                _stan_vector(active_map.stan_variable("t_boundaries"))
+        try:
+            active_map = self._active_model().optimize(
+                data=self._active_data(),
+                seed=int(rng.integers(10_000)),
+                show_console=False,
             )
-        if self._eval_points:
-            map_inits.update(
-                {
-                    "gp_rho_r": float(active_map.stan_variable("gp_rho_r")),
-                    "gp_alpha": float(active_map.stan_variable("gp_alpha")),
-                    "beta_r": np.asarray(active_map.stan_variable("beta_r")).tolist(),
-                }
+            map_inits = {"log_Ne_values": np.log(active_map.stan_variable("Ne_values"))}
+            if self._fixed_t is None:
+                map_inits["log_t_boundaries"] = np.log(
+                    _stan_vector(active_map.stan_variable("t_boundaries"))
+                )
+            if self._eval_points:
+                map_inits.update(
+                    {
+                        "gp_rho_r": float(active_map.stan_variable("gp_rho_r")),
+                        "gp_alpha": float(active_map.stan_variable("gp_alpha")),
+                        "beta_r": np.asarray(active_map.stan_variable("beta_r")).tolist(),
+                    }
+                )
+        except RuntimeError:
+            warnings.warn(
+                "Surrogate MAP failed; Pathfinder will use default inits.",
+                UserWarning,
+                stacklevel=2,
             )
+            map_inits = None
 
         pf_seed = int(rng.integers(10_000))
-        pf = self._active_model().pathfinder(
+        pf_kwargs = dict(
             data=self._active_data(),
             draws=points_per_iter,
             seed=pf_seed,
             num_threads=self._num_workers,
-            inits=map_inits,
+            show_console=False,
+        )
+        if map_inits is not None:
+            pf_kwargs["inits"] = map_inits
+        try:
+            pf = self._active_model().pathfinder(**pf_kwargs)
+        except RuntimeError:
+            warnings.warn(
+                "Pathfinder failed with MAP inits; retrying with defaults.",
+                UserWarning,
+                stacklevel=2,
+            )
+            pf_kwargs.pop("inits", None)
+            pf_kwargs["seed"] = pf_seed + 1
+            pf = self._active_model().pathfinder(**pf_kwargs)
+
+        # Short NUTS chain initialized from Pathfinder draws.
+        n_chains = 4
+        iter_sampling = max(points_per_iter // n_chains, 10)
+        fit = self._active_model().sample(
+            data=self._active_data(),
+            chains=n_chains,
+            iter_warmup=nuts_warmup,
+            iter_sampling=iter_sampling,
+            inits=pf.create_inits(chains=n_chains),
+            seed=int(rng.integers(10_000)),
+            threads_per_chain=self._num_workers,
             show_console=False,
         )
 
-        ne_draws = _stan_draw_matrix(pf.stan_variable("Ne_values"), points_per_iter)[
+        ne_draws = _stan_draw_matrix(fit.stan_variable("Ne_values"), points_per_iter)[
             :points_per_iter
         ]
         if self._fixed_t is None:
             t_draws = _stan_draw_matrix(
-                pf.stan_variable("t_boundaries"), points_per_iter
+                fit.stan_variable("t_boundaries"), points_per_iter
             )[:points_per_iter]
             _ne_str = "  ".join(
                 f"Ne{i + 1}={v:,.0f}" for i, v in enumerate(ne_draws.mean(axis=0))
@@ -595,14 +619,14 @@ class PiecewiseConstantDemography:
                 f"t{i + 1}={v:.1f}" for i, v in enumerate(t_draws.mean(axis=0))
             )
             print(
-                f"[Pathfinder n_eval={len(self._eval_points)}]  {_ne_str}  |  {_t_str}"
+                f"[NUTS n_eval={len(self._eval_points)}]  {_ne_str}  |  {_t_str}"
             )
         else:
             t_draws = np.tile(self._fixed_t, (points_per_iter, 1))
             _ne_str = "  ".join(
                 f"Ne{i + 1}={v:,.0f}" for i, v in enumerate(ne_draws.mean(axis=0))
             )
-            print(f"[Pathfinder n_eval={len(self._eval_points)}]  {_ne_str}  (t fixed)")
+            print(f"[NUTS n_eval={len(self._eval_points)}]  {_ne_str}  (t fixed)")
 
         iterator = tqdm(
             enumerate(zip(ne_draws, t_draws)),
@@ -614,7 +638,191 @@ class PiecewiseConstantDemography:
             mc_seed = int(rng.integers(2**31))
             self._eval_points.append(_mc_eval(ne, t_bnd, mc_seed, iterator))
 
-        return pf
+        return fit
+
+    def learn_surrogate_likelihood(
+        self,
+        n_map_iterations: int = 5,
+        n_nuts_samples: int = 5,
+        n_map_starts: int = 4,
+        nuts_warmup: int = 500,
+        max_tolerance: float = 0.01,
+        max_replicates: int = 512,
+        seed: Optional[int] = None,
+        progress_bar: bool = True,
+    ):
+        """
+        Learn the surrogate likelihood via MAP warm-up then NUTS sampling.
+
+        Phase 1: ``n_map_iterations`` rounds of MAP (best of
+        ``n_map_starts`` restarts), each evaluated and appended to the
+        synthetic dataset.
+
+        Phase 2: short NUTS chain (Pathfinder-initialised) producing
+        ``n_nuts_samples`` draws, each evaluated and appended.
+
+        Returns
+        -------
+        cmdstanpy.CmdStanMCMC
+        """
+        if self._sequence_length is None:
+            raise ValueError(
+                "sequence_length must be provided at initialisation to use "
+                "learn_surrogate_likelihood."
+            )
+
+        from tqdm.auto import tqdm
+
+        from .. import deterministic as det
+        from .. import montecarlo as mc2
+
+        rng = np.random.default_rng(seed)
+        batch_size = self._num_workers
+
+        def _mc_eval(
+            ne_values: np.ndarray, t_bnd: np.ndarray, mc_seed: int, outer
+        ) -> dict:
+            _, det_ld_raw = det.expected_piecewise_constant(
+                ne_values,
+                t_bnd,
+                self._left_bins,
+                self._right_bins,
+                self._mutation_rate,
+                sample_size=self._num_samples,
+                ploidy=2,
+            )
+            det_ld = np.asarray(det_ld_raw)
+
+            _ne_str = "/".join(f"{v:,.0f}" for v in ne_values)
+            seed_rng = np.random.default_rng(mc_seed)
+            all_mc_ld: list[np.ndarray] = []
+            while True:
+                _, mc_batch_raw = mc2.expected_piecewise_constant(
+                    ne_values,
+                    t_bnd,
+                    self._left_bins,
+                    self._right_bins,
+                    self._mutation_rate,
+                    self._recombination_rate,
+                    self._sequence_length,
+                    self._num_samples,
+                    random_seed=int(seed_rng.integers(2**31)),
+                    num_replicates=batch_size,
+                    ploidy=2,
+                    num_workers=self._num_workers,
+                )
+                all_mc_ld.append(np.asarray(mc_batch_raw))
+                mc_ld_reps = np.concatenate(all_mc_ld, axis=0)
+                N = mc_ld_reps.shape[0]
+                mc_ld_rel = mc_ld_reps / det_ld - 1.0
+                rel_bias = mc_ld_rel.mean(axis=0)
+                eps_rel = mc_ld_rel.std(axis=0, ddof=1) / np.sqrt(N)
+                outer.set_postfix(Ne=_ne_str, rep=N, max_se=f"{eps_rel.max():.4f}")
+                if eps_rel.max() <= max_tolerance or N >= max_replicates:
+                    break
+            return {"rel_bias": rel_bias, "eps_rel": eps_rel}
+
+        # Phase 1: MAP iterations
+        iterator = tqdm(
+            range(n_map_iterations),
+            desc="MAP active learning",
+            disable=not progress_bar,
+        )
+        for iteration in iterator:
+            best_map = None
+            best_lp = -np.inf
+            for _ in range(n_map_starts):
+                try:
+                    m = self._active_model().optimize(
+                        data=self._active_data(),
+                        seed=int(rng.integers(10_000)),
+                        show_console=False,
+                    )
+                    lp = float(m.optimized_params_dict["lp__"])
+                    if lp > best_lp:
+                        best_lp = lp
+                        best_map = m
+                except RuntimeError:
+                    continue
+
+            if best_map is None:
+                warnings.warn(
+                    f"All MAP starts failed at iteration {iteration}; skipping.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                continue
+
+            ne_values = _stan_vector(best_map.stan_variable("Ne_values"))
+            if self._fixed_t is None:
+                t_bnd = _stan_vector(best_map.stan_variable("t_boundaries"))
+            else:
+                t_bnd = self._fixed_t
+            _ne_str = "  ".join(
+                f"Ne{i + 1}={v:,.0f}" for i, v in enumerate(ne_values)
+            )
+            print(
+                f"[MAP {iteration + 1}/{n_map_iterations} "
+                f"n_eval={len(self._eval_points)}]  {_ne_str}"
+            )
+            mc_seed = int(rng.integers(2**31))
+            self._eval_points.append(_mc_eval(ne_values, t_bnd, mc_seed, iterator))
+
+        # Phase 2: NUTS samples initialised from Pathfinder
+        pf = self._active_model().pathfinder(
+            data=self._active_data(),
+            seed=int(rng.integers(10_000)),
+            num_threads=self._num_workers,
+            show_console=False,
+        )
+
+        n_chains = 4
+        iter_sampling = max(n_nuts_samples // n_chains, 10)
+        fit = self._active_model().sample(
+            data=self._active_data(),
+            chains=n_chains,
+            iter_warmup=nuts_warmup,
+            iter_sampling=iter_sampling,
+            inits=pf.create_inits(chains=n_chains),
+            seed=int(rng.integers(10_000)),
+            threads_per_chain=self._num_workers,
+            show_console=False,
+        )
+
+        ne_draws = _stan_draw_matrix(fit.stan_variable("Ne_values"), n_nuts_samples)[
+            :n_nuts_samples
+        ]
+        if self._fixed_t is None:
+            t_draws = _stan_draw_matrix(
+                fit.stan_variable("t_boundaries"), n_nuts_samples
+            )[:n_nuts_samples]
+            _ne_str = "  ".join(
+                f"Ne{i + 1}={v:,.0f}" for i, v in enumerate(ne_draws.mean(axis=0))
+            )
+            _t_str = "  ".join(
+                f"t{i + 1}={v:.1f}" for i, v in enumerate(t_draws.mean(axis=0))
+            )
+            print(
+                f"[NUTS n_eval={len(self._eval_points)}]  {_ne_str}  |  {_t_str}"
+            )
+        else:
+            t_draws = np.tile(self._fixed_t, (n_nuts_samples, 1))
+            _ne_str = "  ".join(
+                f"Ne{i + 1}={v:,.0f}" for i, v in enumerate(ne_draws.mean(axis=0))
+            )
+            print(f"[NUTS n_eval={len(self._eval_points)}]  {_ne_str}  (t fixed)")
+
+        iterator = tqdm(
+            enumerate(zip(ne_draws, t_draws)),
+            total=min(len(ne_draws), len(t_draws)),
+            desc="NUTS active learning",
+            disable=not progress_bar,
+        )
+        for i, (ne, t_bnd) in iterator:
+            mc_seed = int(rng.integers(2**31))
+            self._eval_points.append(_mc_eval(ne, t_bnd, mc_seed, iterator))
+
+        return fit
 
     # ──────────────────────────────────────────────────────────────────────
     # Inference interface
@@ -638,7 +846,7 @@ class PiecewiseConstantDemography:
         result.update(
             {
                 "gp_bias_ld": np.asarray(fit.stan_variable("gp_bias_ld")),
-                "corrected_ld": np.asarray(fit.stan_variable("corrected_ld_gq")),
+                "corrected_ld": np.asarray(fit.stan_variable("corrected_ld")),
                 "gp_rho_r": float(fit.stan_variable("gp_rho_r")),
                 "gp_alpha": float(fit.stan_variable("gp_alpha")),
             }

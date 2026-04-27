@@ -44,7 +44,6 @@ def test_constant_mc_jit_vmap_smoke():
             random_seed=13_867,
             num_replicates=3,
             ploidy=2,
-            model="discretized_smc_prime",
         )
 
     values = jax.vmap(logdensity)(jnp.log(jnp.array([100.0])))

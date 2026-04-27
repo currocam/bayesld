@@ -183,23 +183,6 @@ def test_deterministic_secondary_introduction(rng):
     _assert_positive(pi_mean, ld_mean)
 
 
-def test_montecarlo_secondary_introduction(rng):
-    Ne_1 = rng.uniform(10, 2000)
-    Ne_2 = rng.uniform(10, 2000)
-    Ne_a = rng.uniform(10, 2000)
-    t0 = rng.uniform(1, 50)
-    t1 = t0 + rng.uniform(1, 50)
-    migration_rate = rng.uniform(0.0001, 0.1)
-    pi_vec, ld_mat = montecarlo.expected_secondary_introduction(
-        Ne_1=Ne_1,
-        Ne_2=Ne_2,
-        Ne_a=Ne_a,
-        t0=t0,
-        t1=t1,
-        migration_rate=migration_rate,
-        **MC_KWARGS,
-    )
-    _assert_positive(pi_vec.mean(), ld_mat.mean(axis=0))
 
 
 # ══════════════════════════════════════════════════════════════════════════════

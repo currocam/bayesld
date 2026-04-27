@@ -11,7 +11,7 @@ def _():
     import arviz_base as az
     import matplotlib.pyplot as plt
     from bayesld import linear_bins
-    from bayesld import montecarlo2 as mc2
+    from bayesld import montecarlo as mc2
     import jax
     jax.config.update("jax_enable_x64", True)
     from bayesld.models import PiecewiseExponentialDemography
@@ -37,19 +37,19 @@ def _(linear_bins):
 @app.cell
 def _(mo):
     ne_c_slider = mo.ui.slider(
-        10, 50_000, value=100, step=10,
+        10, 50_000, value=4000, step=10,
         label="Ne_c -- contemporary Ne (truth)",
     )
     ne_a_slider = mo.ui.slider(
-        10, 50_000, value=5000, step=10,
+        10, 50_000, value=10000, step=10,
         label="Ne_a -- ancestral Ne (truth)",
     )
     t0_slider = mo.ui.slider(
-        1, 500, value=50, step=1,
+        1, 500, value=30, step=1,
         label="t0 -- transition time (generations ago)",
     )
     lfc_slider = mo.ui.slider(
-        -5.0, 5.0, value=0.5, step=0.1,
+        -5.0, 5.0, value=5, step=0.1,
         label="log_fold_change -- total log-ratio over exponential phase",
     )
     sample_size_slider = mo.ui.slider(
@@ -107,6 +107,12 @@ def _(
 
 
 @app.cell
+def _(Ne_c_truth, alpha_truth, np, t0_truth):
+    Ne_c_truth*np.exp(-alpha_truth*t0_truth)
+    return
+
+
+@app.cell
 def _(
     Ne_a_truth,
     Ne_c_truth,
@@ -135,8 +141,10 @@ def _(
             left_bins, right_bins,
             mutation_rate, recombination_rate, window_length,
             sample_size,
-            random_seed=42,
+            random_seed=319879,
             num_replicates=num_windows,
+            model="hudson",
+            num_workers=8,
             ploidy=2,
         )
     pi_data = np.array(_pi)
@@ -233,22 +241,21 @@ def _(Ne_a_truth, Ne_c_truth, lfc_truth, mo, model, np, t0_truth):
 @app.cell
 def _(mo, model):
     mo.stop(model is None)
-    n_rounds = 3
-    with mo.status.spinner(f"Running {n_rounds} active learning rounds..."):
-        for _ in range(n_rounds):
-            model.surrogate_active_learning(
-                points_per_iter=3,
-                max_tolerance=0.05,
-                seed=None,
-            )
+    with mo.status.spinner("Learning surrogate likelihood..."):
+        model.learn_surrogate_likelihood(
+            n_map_iterations=5,
+            n_nuts_samples=5,
+            max_tolerance=0.1,
+            seed=None,
+        )
     n_eval_points = len(model.eval_points)
     mo.md(f"Surrogate dataset: **{n_eval_points}** MC evaluation points accumulated.")
-    return
+    return (n_eval_points,)
 
 
 @app.cell
-def _(az, mo, model):
-    mo.stop(model is None)
+def _(az, mo, model, n_eval_points):
+    mo.stop(model is None and len(n_eval_points) > 0)
     with mo.status.spinner("Running NUTS (4 chains x 1000 samples)..."):
         _fit = model.sample(
             chains=4,
@@ -370,8 +377,8 @@ def _(idata, ld_data, left_bins, mo, model, np, plt, right_bins):
     _ax_ld.fill_between(_bin_mid, _approx_lo, _approx_hi, color="tomato", alpha=0.25)
     _ax_ld.plot(_bin_mid, _approx_mid, "-", color="tomato", lw=2, label="Approx LD (posterior mean +/- 90% CI)")
 
-    if _has_surrogate and "corrected_ld_gq" in _post:
-        _corr_draws = np.array(_post["corrected_ld_gq"]).reshape(-1, len(_bin_mid))
+    if _has_surrogate and "corrected_ld" in _post:
+        _corr_draws = np.array(_post["corrected_ld"]).reshape(-1, len(_bin_mid))
         _corr_lo = np.percentile(_corr_draws, 5, axis=0)
         _corr_hi = np.percentile(_corr_draws, 95, axis=0)
         _corr_mid = _corr_draws.mean(axis=0)

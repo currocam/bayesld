@@ -9,19 +9,12 @@ name = "bayesld"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-enterpolation = "0.2"
 numpy = "0.27.1"
-ordered-float = "4"
 pyo3 = "0.27.0"
-rand = "0.8"
-rand_distr = "0.4"
-rand_xoshiro = "0.6"
-thiserror = "2"
-tskit = { version = "0.15.0-alpha.4", features = ["derive", "bindings"], git = "https://github.com/tskit-dev/tskit-rust" }
 
 [dev-dependencies]
 criterion = "0.5"
-proptest = "1"
+rand = "0.8"
 
 [[bench]]
 name = "bayesld_bench"
