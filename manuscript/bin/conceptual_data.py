@@ -1,15 +1,13 @@
+#!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "bayesld",
-#     "msprime",
-#     "numpy",
-#     "joblib",
-#     "tqdm",
+#     "bayesld @ git+https://github.com/currocam/bayesld.git@95f5051",
+#     "msprime==1.4.0",
+#     "numpy==2.2.6",
+#     "joblib==1.5.3",
+#     "tqdm==4.67.3",
 # ]
-#
-# [tool.uv.sources]
-# bayesld = { path = "../../" }
 # ///
 import gzip
 import pickle

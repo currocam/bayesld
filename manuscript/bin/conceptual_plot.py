@@ -1,26 +1,39 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "bayesld @ git+https://github.com/currocam/bayesld.git@95f5051",
+#     "marimo==0.23.3",
+#     "numpy==2.2.6",
+#     "matplotlib==3.10.9",
+#     "msprime==1.4.0",
+#     "demesdraw==0.4.1",
+#     "matplotlib-label-lines==0.8.1",
+# ]
+# ///
 import marimo
 
 __generated_with = "0.23.3"
 app = marimo.App(width="medium")
 
 with app.setup:
+    import gzip
+    import pickle
+    from pathlib import Path
+
     import marimo as mo
-    import pickle, gzip
+    import matplotlib.patheffects as pe
+    import matplotlib.pyplot as plt
     import numpy as np
 
-    import matplotlib.pyplot as plt
-    import matplotlib.patheffects as pe
-
     # Theme settings
-    plt.style.use("bin/theme.mplstyle")
+    plt.style.use(Path(__file__).parent / "theme.mplstyle")
     plt.rc("figure", autolayout=True)
 
     ONE_MM = 1 / 25.4
     SINGLE_COL = 85 * ONE_MM
     DOUBLE_COL = SINGLE_COL * 2
     ONE_HALF_COL = SINGLE_COL * 1.5
-
-    SCRIPT_MODE = mo.app_meta().mode == "script"
 
 
 @app.cell
@@ -85,7 +98,8 @@ def _(ne1, ne2):
         figsize=(ONE_HALF_COL, ONE_HALF_COL * 0.75), dpi=300, constrained_layout=True
     )
 
-    import msprime, demesdraw
+    import demesdraw
+    import msprime
     from matplotlib.lines import Line2D
 
     demo = msprime.Demography()
@@ -110,8 +124,7 @@ def _(ne1, ne2):
     ax_a.legend(handles=custom_legend, title="")
     ax_a.set_xlabel("Time ago (generations)")
     ax_a.set_ylabel("Population size $N_e(t)$", rotation=90)
-    if SCRIPT_MODE:
-        fig_a.savefig("conceptual_figure_panel_a.pdf")
+    fig_a.savefig("conceptual_figure_panel_a.pdf")
     fig_a
     return
 
@@ -146,10 +159,9 @@ def _(baseline_linkage, left_bins, right_bins, sim_linkage, times):
 
     ax_b.set_xlabel("Genetic distance (centimorgan)")
     ax_b.set_ylabel(r"Linkage disequilibrium $\mathbb E[X_iX_jY_iY_j]$")
-    #ax_b.set_xscale("log")
+    # ax_b.set_xscale("log")
     ax_b.legend()
-    if SCRIPT_MODE:
-        fig_b.savefig("conceptual_figure_panel_b.pdf")
+    fig_b.savefig("conceptual_figure_panel_b.pdf")
     fig_b
     return
 
@@ -186,18 +198,17 @@ def _(expected_div, labelLine, sim_div, times):
         times,
         _vals.mean(axis=1),
         yerr=_vals.std(axis=1),
-        fmt="o", markersize=2,
+        fmt="o",
+        markersize=2,
         label="Bottleneck",
         color="C0",
     )
     ax_c.set_xlabel("Bottleneck start (generations ago)")
-    ax_c.set_ylabel("Relative change in\ngenetic diversity ($\pi$)")
+    ax_c.set_ylabel("Relative change in\ngenetic diversity ($\\pi$)")
     ax_c.set_xlim(0, 100)
     labelLine(_hoz_line, x=times[-21], backgroundcolor="white")
 
-    if SCRIPT_MODE:
-        fig_c.savefig("conceptual_figure_panel_c.pdf")
-    plt.show()
+    fig_c.savefig("conceptual_figure_panel_c.pdf")
     return
 
 
@@ -217,13 +228,13 @@ def _(baseline_linkage, labelLine, sim_linkage, times):
         constrained_layout=True,
     )
 
-
     _vals = sim_linkage[:, :, -1] / baseline_linkage[:, -1].mean()
     ax_d.errorbar(
         times,
         _vals.mean(axis=1),
         yerr=_vals.std(axis=1),
-        fmt="o", markersize=2.5,
+        fmt="o",
+        markersize=2.5,
         label="9.5cM-10.0cM",
         color="C2",
     )
@@ -234,7 +245,8 @@ def _(baseline_linkage, labelLine, sim_linkage, times):
         times,
         _vals.mean(axis=1),
         yerr=_vals.std(axis=1),
-        fmt="o", markersize=2.5,
+        fmt="o",
+        markersize=2.5,
         label="0.5cM-1.0cM",
         color="C1",
     )
@@ -243,22 +255,26 @@ def _(baseline_linkage, labelLine, sim_linkage, times):
         [times[0], times[-1]], [1, 1], label=r"no change", linestyle="--", color="black"
     )
 
-
-
     ax_d.set_xlabel("Bottleneck start (generations ago)")
-    ax_d.set_ylabel(r"Relative change in linkage" + "\n disequilibrium ($\mathbb E[X_iX_jY_iY_ j]$)")
+    ax_d.set_ylabel(
+        r"Relative change in linkage"
+        + "\n"
+        + r" disequilibrium ($\mathbb E[X_iX_jY_iY_j]$)"
+    )
     ax_d.set_xlim(0, 100)
     ax_d.set_yscale("log")
     ax_d.set_yticks([1.0, 1.5, 3, 6, 9])
-    ax_d.yaxis.set_major_formatter(plt.matplotlib.ticker.FuncFormatter(lambda x, _: f"{x:g}"))
+    ax_d.yaxis.set_major_formatter(
+        plt.matplotlib.ticker.FuncFormatter(lambda x, _: f"{x:g}")
+    )
     ax_d.yaxis.set_minor_locator(plt.matplotlib.ticker.NullLocator())
     labelLine(_hoz_line, x=times[75], backgroundcolor="white", drop_label=True)
 
-    ax_d.legend(loc="center right", bbox_to_anchor=(1.0, 0.40), title = "Genetic distance")
+    ax_d.legend(
+        loc="center right", bbox_to_anchor=(1.0, 0.40), title="Genetic distance"
+    )
 
-    if SCRIPT_MODE:
-        fig_d.savefig("conceptual_figure_panel_d.pdf")
-    plt.show()
+    fig_d.savefig("conceptual_figure_panel_d.pdf")
     return
 
 
