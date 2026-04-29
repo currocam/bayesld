@@ -558,7 +558,9 @@ class PiecewiseConstantDemography:
                     {
                         "gp_rho_r": float(active_map.stan_variable("gp_rho_r")),
                         "gp_alpha": float(active_map.stan_variable("gp_alpha")),
-                        "beta_r": np.asarray(active_map.stan_variable("beta_r")).tolist(),
+                        "beta_r": np.asarray(
+                            active_map.stan_variable("beta_r")
+                        ).tolist(),
                     }
                 )
         except RuntimeError:
@@ -618,9 +620,7 @@ class PiecewiseConstantDemography:
             _t_str = "  ".join(
                 f"t{i + 1}={v:.1f}" for i, v in enumerate(t_draws.mean(axis=0))
             )
-            print(
-                f"[NUTS n_eval={len(self._eval_points)}]  {_ne_str}  |  {_t_str}"
-            )
+            print(f"[NUTS n_eval={len(self._eval_points)}]  {_ne_str}  |  {_t_str}")
         else:
             t_draws = np.tile(self._fixed_t, (points_per_iter, 1))
             _ne_str = "  ".join(
@@ -758,9 +758,7 @@ class PiecewiseConstantDemography:
                 t_bnd = _stan_vector(best_map.stan_variable("t_boundaries"))
             else:
                 t_bnd = self._fixed_t
-            _ne_str = "  ".join(
-                f"Ne{i + 1}={v:,.0f}" for i, v in enumerate(ne_values)
-            )
+            _ne_str = "  ".join(f"Ne{i + 1}={v:,.0f}" for i, v in enumerate(ne_values))
             print(
                 f"[MAP {iteration + 1}/{n_map_iterations} "
                 f"n_eval={len(self._eval_points)}]  {_ne_str}"
@@ -802,9 +800,7 @@ class PiecewiseConstantDemography:
             _t_str = "  ".join(
                 f"t{i + 1}={v:.1f}" for i, v in enumerate(t_draws.mean(axis=0))
             )
-            print(
-                f"[NUTS n_eval={len(self._eval_points)}]  {_ne_str}  |  {_t_str}"
-            )
+            print(f"[NUTS n_eval={len(self._eval_points)}]  {_ne_str}  |  {_t_str}")
         else:
             t_draws = np.tile(self._fixed_t, (n_nuts_samples, 1))
             _ne_str = "  ".join(

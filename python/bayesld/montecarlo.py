@@ -12,7 +12,7 @@ import numpy as np
 from joblib import Parallel, delayed
 
 _DEFAULT_MODEL = msprime.SMCK(k=1)
-MAX_REPLICATES = 10_000
+MAX_REPLICATES = 100_000
 _SENTINEL = object()
 
 
@@ -29,7 +29,7 @@ def _run_replicate(
     model,
 ):
     """Run a single Monte Carlo replicate and return (pi, ld_per_bin)."""
-    from . import data_from_tree_sequence   # local import for joblib pickling
+    from . import data_from_tree_sequence  # local import for joblib pickling
 
     demography = msprime.Demography.from_demes(demography_demes)
     ts = msprime.sim_ancestry(
@@ -109,9 +109,16 @@ def _parallel_mc(
     def run_batch(seeds):
         results = Parallel(n_jobs=num_workers)(
             delayed(_run_replicate)(
-                int(s), sample_size, dem_demes, recombination_rate,
-                sequence_length, mutation_rate, left_bins, right_bins,
-                ploidy, model,
+                int(s),
+                sample_size,
+                dem_demes,
+                recombination_rate,
+                sequence_length,
+                mutation_rate,
+                left_bins,
+                right_bins,
+                ploidy,
+                model,
             )
             for s in seeds
         )
@@ -213,10 +220,20 @@ def expected_constant(
         return d
 
     return _parallel_mc(
-        build_demography, (Ne,),
-        left_bins, right_bins, mutation_rate, recombination_rate,
-        sequence_length, sample_size, ploidy, model,
-        random_seed, num_replicates, num_workers, rtol,
+        build_demography,
+        (Ne,),
+        left_bins,
+        right_bins,
+        mutation_rate,
+        recombination_rate,
+        sequence_length,
+        sample_size,
+        ploidy,
+        model,
+        random_seed,
+        num_replicates,
+        num_workers,
+        rtol,
     )
 
 
@@ -275,10 +292,20 @@ def expected_piecewise_exponential(
         return d
 
     return _parallel_mc(
-        build_demography, (Ne_c, Ne_a, t0, alpha),
-        left_bins, right_bins, mutation_rate, recombination_rate,
-        sequence_length, sample_size, ploidy, model,
-        random_seed, num_replicates, num_workers, rtol,
+        build_demography,
+        (Ne_c, Ne_a, t0, alpha),
+        left_bins,
+        right_bins,
+        mutation_rate,
+        recombination_rate,
+        sequence_length,
+        sample_size,
+        ploidy,
+        model,
+        random_seed,
+        num_replicates,
+        num_workers,
+        rtol,
     )
 
 
@@ -337,15 +364,27 @@ def expected_exponential_carrying_capacity(
     def build_demography(ne_c, ne_a, t0_, t1_, alpha_):
         d = msprime.Demography()
         d.add_population(name="pop0", initial_size=ne_c, growth_rate=0)
-        d.add_population_parameters_change(time=t0_, initial_size=ne_c, growth_rate=alpha_)
+        d.add_population_parameters_change(
+            time=t0_, initial_size=ne_c, growth_rate=alpha_
+        )
         d.add_population_parameters_change(time=t1_, initial_size=ne_a, growth_rate=0)
         return d
 
     return _parallel_mc(
-        build_demography, (Ne_c, Ne_a, t0, t1, alpha),
-        left_bins, right_bins, mutation_rate, recombination_rate,
-        sequence_length, sample_size, ploidy, model,
-        random_seed, num_replicates, num_workers, rtol,
+        build_demography,
+        (Ne_c, Ne_a, t0, t1, alpha),
+        left_bins,
+        right_bins,
+        mutation_rate,
+        recombination_rate,
+        sequence_length,
+        sample_size,
+        ploidy,
+        model,
+        random_seed,
+        num_replicates,
+        num_workers,
+        rtol,
     )
 
 
@@ -391,10 +430,10 @@ def expected_piecewise_constant(
     ld_replicates : ndarray (n, num_bins)
     """
     num_replicates, rtol = _validate_stopping(num_replicates, rtol)
-    Ne_values    = list(Ne_values)
+    Ne_values = list(Ne_values)
     t_boundaries = list(t_boundaries)
-    left_bins    = np.asarray(left_bins)
-    right_bins   = np.asarray(right_bins)
+    left_bins = np.asarray(left_bins)
+    right_bins = np.asarray(right_bins)
 
     def build_demography(ne_vals, t_bounds):
         d = msprime.Demography()
@@ -404,8 +443,18 @@ def expected_piecewise_constant(
         return d
 
     return _parallel_mc(
-        build_demography, (Ne_values, t_boundaries),
-        left_bins, right_bins, mutation_rate, recombination_rate,
-        sequence_length, sample_size, ploidy, model,
-        random_seed, num_replicates, num_workers, rtol,
+        build_demography,
+        (Ne_values, t_boundaries),
+        left_bins,
+        right_bins,
+        mutation_rate,
+        recombination_rate,
+        sequence_length,
+        sample_size,
+        ploidy,
+        model,
+        random_seed,
+        num_replicates,
+        num_workers,
+        rtol,
     )

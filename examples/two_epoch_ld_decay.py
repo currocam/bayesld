@@ -61,7 +61,13 @@ def _(Ne1, Ne2, ld_mat, left_bins, np, plt, right_bins, t_boundary):
     for i in range(ld_mat.shape[0]):
         ax.plot(bin_midpoints, ld_mat[i], color="steelblue", alpha=0.1, linewidth=0.5)
     # mean
-    ax.plot(bin_midpoints, np.mean(ld_mat, axis=0), color="darkblue", linewidth=2, label="mean")
+    ax.plot(
+        bin_midpoints,
+        np.mean(ld_mat, axis=0),
+        color="darkblue",
+        linewidth=2,
+        label="mean",
+    )
     ax.set_xlabel("Genetic distance (Morgan)")
     ax.set_ylabel("LD (r\u00b2)")
     ax.set_title(

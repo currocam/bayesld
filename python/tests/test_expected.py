@@ -183,8 +183,6 @@ def test_deterministic_secondary_introduction(rng):
     _assert_positive(pi_mean, ld_mean)
 
 
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # Invariant tests
 # ══════════════════════════════════════════════════════════════════════════════

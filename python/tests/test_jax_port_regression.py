@@ -144,4 +144,3 @@ class TestMonteCarloRegression:
         ref = reference["montecarlo"]["piecewise_constant"]
         np.testing.assert_allclose(float(pi_vec.mean()), ref["pi_mean"])
         np.testing.assert_allclose(np.asarray(ld_mat.mean(axis=0)), ref["ld_mean"])
-

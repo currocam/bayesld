@@ -35,28 +35,42 @@ def _(linear_bins):
 @app.cell
 def _(mo):
     ne_slider = mo.ui.slider(
-        10, 20_000, value=1_000, step=500,
+        10,
+        20_000,
+        value=1_000,
+        step=500,
         label="Ne truth",
     )
     sample_size_slider = mo.ui.slider(
-        10, 200, value=50, step=10,
+        10,
+        200,
+        value=50,
+        step=10,
         label="Sample size (diploid individuals)",
     )
     num_windows_slider = mo.ui.slider(
-        10, 500, value=50, step=10,
+        10,
+        500,
+        value=50,
+        step=10,
         label="Windows",
     )
     num_replicates_slider = mo.ui.slider(
-        10, 100, value=10, step=1,
+        10,
+        100,
+        value=10,
+        step=1,
         label="Replicates",
     )
-    mo.vstack([
-        mo.md("## Simulation parameters"),
-        ne_slider,
-        sample_size_slider,
-        num_windows_slider,
-        num_replicates_slider,
-    ])
+    mo.vstack(
+        [
+            mo.md("## Simulation parameters"),
+            ne_slider,
+            sample_size_slider,
+            num_windows_slider,
+            num_replicates_slider,
+        ]
+    )
     return (
         ne_slider,
         num_replicates_slider,
@@ -113,7 +127,7 @@ def _(
         mo.md(
             f"Simulated **{len(pi_data)}** windows · "
             f"Ne={Ne_truth:,} · n={sample_size} · "
-            f"L={window_length/1e6:.0f} Mb"
+            f"L={window_length / 1e6:.0f} Mb"
         ),
         kind="success",
     )
@@ -162,20 +176,27 @@ def _(mo, model):
     with mo.status.spinner("Optimising…"):
         opt_result = model.optimize(show_console=False, seed=1)
     _gp_line = (
-        [mo.md(f"GP bias = {opt_result['gp_bias']:.4f}  ·  "
-               f"ρ = {opt_result['gp_rho']:.3f}  ·  "
-               f"α = {opt_result['gp_alpha']:.3f}")]
-        if "gp_bias" in opt_result else []
+        [
+            mo.md(
+                f"GP bias = {opt_result['gp_bias']:.4f}  ·  "
+                f"ρ = {opt_result['gp_rho']:.3f}  ·  "
+                f"α = {opt_result['gp_alpha']:.3f}"
+            )
+        ]
+        if "gp_bias" in opt_result
+        else []
     )
-    mo.vstack([
-        mo.md("### MAP result"),
-        mo.md(
-            f"**Ne = {opt_result['Ne']:,.0f}** &nbsp;·&nbsp; "
-            f"E[π] = {opt_result['E_pi']:.3e} &nbsp;·&nbsp; "
-            f"Σ log_lik = {opt_result['log_lik'].sum():.2f}"
-        ),
-        *_gp_line,
-    ])
+    mo.vstack(
+        [
+            mo.md("### MAP result"),
+            mo.md(
+                f"**Ne = {opt_result['Ne']:,.0f}** &nbsp;·&nbsp; "
+                f"E[π] = {opt_result['E_pi']:.3e} &nbsp;·&nbsp; "
+                f"Σ log_lik = {opt_result['log_lik'].sum():.2f}"
+            ),
+            *_gp_line,
+        ]
+    )
     return (opt_result,)
 
 
@@ -218,6 +239,7 @@ def _(idata, mo, plt):
         mo.md("Run NUTS sampling to see the ArviZ summary."),
     )
     import arviz_plots as azp
+
     azp.plot_dist(idata, var_names="Ne")
     plt.gca()
     return (azp,)
@@ -226,7 +248,7 @@ def _(idata, mo, plt):
 @app.cell
 def _(azp, idata, mo, model):
     mo.stop(
-        len(model.eval_points)==0,
+        len(model.eval_points) == 0,
         mo.md("Run active learning"),
     )
     azp.plot_trace(idata, var_names="gp_bias_ld")
@@ -244,12 +266,19 @@ def _(ld_data, left_bins, mo, np, opt_result, plt, right_bins):
 
     _fig, _ax = plt.subplots(figsize=(7, 4))
     _ax.plot(
-        _bin_mid, _obs_mean_ld,
-        "o", color="steelblue", ms=5, label="Observed mean LD",
+        _bin_mid,
+        _obs_mean_ld,
+        "o",
+        color="steelblue",
+        ms=5,
+        label="Observed mean LD",
     )
     _ax.plot(
-        _bin_mid, opt_result["approx_ld"],
-        "-", color="tomato", lw=2,
+        _bin_mid,
+        opt_result["approx_ld"],
+        "-",
+        color="tomato",
+        lw=2,
         label=f"MAP approx LD  (Ne = {opt_result['Ne']:,.0f})",
     )
     _ax.set_xlabel("Recombination distance (Morgans)")
@@ -278,7 +307,10 @@ def _(idata, ld_data, left_bins, mo, model, np, plt, right_bins):
     _has_surrogate = len(model.eval_points) > 0
 
     _fig, (_ax_ld, _ax_bias) = plt.subplots(
-        2, 1, figsize=(7, 6), sharex=True,
+        2,
+        1,
+        figsize=(7, 6),
+        sharex=True,
         gridspec_kw={"height_ratios": [3, 1]},
     )
 
@@ -288,19 +320,41 @@ def _(idata, ld_data, left_bins, mo, model, np, plt, right_bins):
     _approx_mid = _approx_draws.mean(axis=0)
 
     _ax_ld.fill_between(_bin_mid, _approx_lo, _approx_hi, color="tomato", alpha=0.25)
-    _ax_ld.plot(_bin_mid, _approx_mid, "-", color="tomato", lw=2, label="Approx LD (posterior mean +/- 90% CI)")
+    _ax_ld.plot(
+        _bin_mid,
+        _approx_mid,
+        "-",
+        color="tomato",
+        lw=2,
+        label="Approx LD (posterior mean +/- 90% CI)",
+    )
 
     if _has_surrogate and "corrected_ld_gq" in _post:
         _corr_draws = np.array(_post["corrected_ld_gq"]).reshape(-1, len(_bin_mid))
         _corr_lo = np.percentile(_corr_draws, 5, axis=0)
         _corr_hi = np.percentile(_corr_draws, 95, axis=0)
         _corr_mid = _corr_draws.mean(axis=0)
-        _ax_ld.fill_between(_bin_mid, _corr_lo, _corr_hi, color="darkorange", alpha=0.25)
-        _ax_ld.plot(_bin_mid, _corr_mid, "-", color="darkorange", lw=2, label="Corrected LD (posterior mean +/- 90% CI)")
+        _ax_ld.fill_between(
+            _bin_mid, _corr_lo, _corr_hi, color="darkorange", alpha=0.25
+        )
+        _ax_ld.plot(
+            _bin_mid,
+            _corr_mid,
+            "-",
+            color="darkorange",
+            lw=2,
+            label="Corrected LD (posterior mean +/- 90% CI)",
+        )
 
     _ax_ld.errorbar(
-        _bin_mid, _obs_mean_ld, yerr=2 * _obs_sem_ld,
-        fmt="o", color="steelblue", ms=4, lw=1.2, zorder=5,
+        _bin_mid,
+        _obs_mean_ld,
+        yerr=2 * _obs_sem_ld,
+        fmt="o",
+        color="steelblue",
+        ms=4,
+        lw=1.2,
+        zorder=5,
         label="Observed mean LD +/- 2 SEM",
     )
     _ax_ld.set_ylabel("Mean LD")
@@ -313,12 +367,22 @@ def _(idata, ld_data, left_bins, mo, model, np, plt, right_bins):
         _bias_lo = np.percentile(_bias_draws, 5, axis=0)
         _bias_hi = np.percentile(_bias_draws, 95, axis=0)
         _bias_mid = _bias_draws.mean(axis=0)
-        _ax_bias.fill_between(_bin_mid, 100 * _bias_lo, 100 * _bias_hi, color="purple", alpha=0.25)
+        _ax_bias.fill_between(
+            _bin_mid, 100 * _bias_lo, 100 * _bias_hi, color="purple", alpha=0.25
+        )
         _ax_bias.plot(_bin_mid, 100 * _bias_mid, "-", color="purple", lw=2)
         _ax_bias.axhline(0, color="gray", lw=0.8, ls="--")
         _ax_bias.set_ylabel("GP bias (%)")
     else:
-        _ax_bias.text(0.5, 0.5, "No surrogate active", ha="center", va="center", transform=_ax_bias.transAxes, color="gray")
+        _ax_bias.text(
+            0.5,
+            0.5,
+            "No surrogate active",
+            ha="center",
+            va="center",
+            transform=_ax_bias.transAxes,
+            color="gray",
+        )
         _ax_bias.set_ylabel("GP bias (%)")
 
     _ax_bias.set_xlabel("Recombination distance (Morgans)")

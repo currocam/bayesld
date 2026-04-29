@@ -40,6 +40,8 @@ _STAN_DIR = pathlib.Path(__file__).resolve().parent.parent.parent.parent / "stan
 _THREADS_OPTS = {"cpp_options": {"STAN_THREADS": "true"}}
 
 _DEFAULT_N_QUAD = 16
+
+
 def _default_prior(diversity: np.ndarray, mutation_rate: float) -> str:
     ne_hat = float(np.mean(diversity)) / (4.0 * mutation_rate)
     log_ne_mu = float(np.log(ne_hat))
@@ -50,6 +52,7 @@ def _default_prior(diversity: np.ndarray, mutation_rate: float) -> str:
         f"    log_t_boundaries[2] ~ normal({np.log(200.0):.4f}, 2.0);\n"
         f"    alpha ~ normal(0, 0.5);"
     )
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # Stan source fragments
@@ -251,7 +254,9 @@ class ExponentialCarryingCapacityDemography:
         self._ld = np.asarray(ld, dtype=float)
         self._mutation_rate = float(mutation_rate)
         self._recombination_rate = float(recombination_rate)
-        self._sequence_length = float(sequence_length) if sequence_length is not None else None
+        self._sequence_length = (
+            float(sequence_length) if sequence_length is not None else None
+        )
         self._num_samples = int(num_samples)
         self._left_bins = np.asarray(left_bins, dtype=float)
         self._right_bins = np.asarray(right_bins, dtype=float)
@@ -261,7 +266,8 @@ class ExponentialCarryingCapacityDemography:
 
         self._prior = (
             _default_prior(self._diversity, self._mutation_rate)
-            if prior is None else prior
+            if prior is None
+            else prior
         )
 
         gl_nodes, gl_weights = np.polynomial.legendre.leggauss(n_quad)
@@ -358,7 +364,9 @@ class ExponentialCarryingCapacityDemography:
         return data
 
     def _active_data(self) -> dict:
-        return self._surrogate_stan_data() if self._eval_points else self._base_stan_data()
+        return (
+            self._surrogate_stan_data() if self._eval_points else self._base_stan_data()
+        )
 
     def _active_model(self):
         return self._surrogate_model if self._eval_points else self._approx_model
@@ -426,12 +434,22 @@ class ExponentialCarryingCapacityDemography:
         batch_size = self._num_workers
 
         def _mc_eval(
-            ne_c: float, ne_a: float, t0: float, t1: float, alpha: float,
-            mc_seed: int, outer,
+            ne_c: float,
+            ne_a: float,
+            t0: float,
+            t1: float,
+            alpha: float,
+            mc_seed: int,
+            outer,
         ) -> dict:
             _, det_ld_raw = det.expected_exponential_carrying_capacity(
-                ne_c, ne_a, t0, t1, alpha,
-                self._left_bins, self._right_bins,
+                ne_c,
+                ne_a,
+                t0,
+                t1,
+                alpha,
+                self._left_bins,
+                self._right_bins,
                 self._mutation_rate,
                 sample_size=self._num_samples,
                 ploidy=2,
@@ -442,9 +460,16 @@ class ExponentialCarryingCapacityDemography:
             all_mc_ld: list[np.ndarray] = []
             while True:
                 _, mc_batch_raw = mc2.expected_exponential_carrying_capacity(
-                    ne_c, ne_a, t0, t1, alpha,
-                    self._left_bins, self._right_bins,
-                    self._mutation_rate, self._recombination_rate, self._sequence_length,
+                    ne_c,
+                    ne_a,
+                    t0,
+                    t1,
+                    alpha,
+                    self._left_bins,
+                    self._right_bins,
+                    self._mutation_rate,
+                    self._recombination_rate,
+                    self._sequence_length,
                     self._num_samples,
                     random_seed=int(seed_rng.integers(2**31)),
                     num_replicates=batch_size,
@@ -457,7 +482,9 @@ class ExponentialCarryingCapacityDemography:
                 mc_ld_rel = mc_ld_reps / det_ld - 1.0
                 rel_bias = mc_ld_rel.mean(axis=0)
                 eps_rel = mc_ld_rel.std(axis=0, ddof=1) / np.sqrt(N)
-                outer.set_postfix(Ne_c=f"{ne_c:,.0f}", rep=N, max_se=f"{eps_rel.max():.4f}")
+                outer.set_postfix(
+                    Ne_c=f"{ne_c:,.0f}", rep=N, max_se=f"{eps_rel.max():.4f}"
+                )
                 if eps_rel.max() <= max_tolerance or N >= max_replicates:
                     break
             return {"rel_bias": rel_bias, "eps_rel": eps_rel}
@@ -472,18 +499,26 @@ class ExponentialCarryingCapacityDemography:
             map_inits = {
                 "log_Ne_c": float(np.log(float(active_map.stan_variable("Ne_c")))),
                 "log_Ne_a": float(np.log(float(active_map.stan_variable("Ne_a")))),
-                "log_t_boundaries": np.log(np.array([
-                    float(active_map.stan_variable("t0")),
-                    float(active_map.stan_variable("t1")),
-                ])),
+                "log_t_boundaries": np.log(
+                    np.array(
+                        [
+                            float(active_map.stan_variable("t0")),
+                            float(active_map.stan_variable("t1")),
+                        ]
+                    )
+                ),
                 "alpha": float(active_map.stan_variable("alpha")),
             }
             if self._eval_points:
-                map_inits.update({
-                    "gp_rho_r": float(active_map.stan_variable("gp_rho_r")),
-                    "gp_alpha": float(active_map.stan_variable("gp_alpha")),
-                    "beta_r": np.asarray(active_map.stan_variable("beta_r")).tolist(),
-                })
+                map_inits.update(
+                    {
+                        "gp_rho_r": float(active_map.stan_variable("gp_rho_r")),
+                        "gp_alpha": float(active_map.stan_variable("gp_alpha")),
+                        "beta_r": np.asarray(
+                            active_map.stan_variable("beta_r")
+                        ).tolist(),
+                    }
+                )
         except RuntimeError:
             warnings.warn(
                 "Surrogate MAP failed; Pathfinder will use default inits.",
@@ -549,8 +584,15 @@ class ExponentialCarryingCapacityDemography:
         for i, (ne_c, ne_a, t0, t1, alpha) in iterator:
             mc_seed = int(rng.integers(2**31))
             self._eval_points.append(
-                _mc_eval(float(ne_c), float(ne_a), float(t0), float(t1), float(alpha),
-                         mc_seed, iterator)
+                _mc_eval(
+                    float(ne_c),
+                    float(ne_a),
+                    float(t0),
+                    float(t1),
+                    float(alpha),
+                    mc_seed,
+                    iterator,
+                )
             )
 
         return fit
@@ -595,12 +637,22 @@ class ExponentialCarryingCapacityDemography:
         batch_size = self._num_workers
 
         def _mc_eval(
-            ne_c: float, ne_a: float, t0: float, t1: float, alpha: float,
-            mc_seed: int, outer,
+            ne_c: float,
+            ne_a: float,
+            t0: float,
+            t1: float,
+            alpha: float,
+            mc_seed: int,
+            outer,
         ) -> dict:
             _, det_ld_raw = det.expected_exponential_carrying_capacity(
-                ne_c, ne_a, t0, t1, alpha,
-                self._left_bins, self._right_bins,
+                ne_c,
+                ne_a,
+                t0,
+                t1,
+                alpha,
+                self._left_bins,
+                self._right_bins,
                 self._mutation_rate,
                 sample_size=self._num_samples,
                 ploidy=2,
@@ -611,9 +663,16 @@ class ExponentialCarryingCapacityDemography:
             all_mc_ld: list[np.ndarray] = []
             while True:
                 _, mc_batch_raw = mc2.expected_exponential_carrying_capacity(
-                    ne_c, ne_a, t0, t1, alpha,
-                    self._left_bins, self._right_bins,
-                    self._mutation_rate, self._recombination_rate, self._sequence_length,
+                    ne_c,
+                    ne_a,
+                    t0,
+                    t1,
+                    alpha,
+                    self._left_bins,
+                    self._right_bins,
+                    self._mutation_rate,
+                    self._recombination_rate,
+                    self._sequence_length,
                     self._num_samples,
                     random_seed=int(seed_rng.integers(2**31)),
                     num_replicates=batch_size,
@@ -626,7 +685,9 @@ class ExponentialCarryingCapacityDemography:
                 mc_ld_rel = mc_ld_reps / det_ld - 1.0
                 rel_bias = mc_ld_rel.mean(axis=0)
                 eps_rel = mc_ld_rel.std(axis=0, ddof=1) / np.sqrt(N)
-                outer.set_postfix(Ne_c=f"{ne_c:,.0f}", rep=N, max_se=f"{eps_rel.max():.4f}")
+                outer.set_postfix(
+                    Ne_c=f"{ne_c:,.0f}", rep=N, max_se=f"{eps_rel.max():.4f}"
+                )
                 if eps_rel.max() <= max_tolerance or N >= max_replicates:
                     break
             return {"rel_bias": rel_bias, "eps_rel": eps_rel}
@@ -720,8 +781,15 @@ class ExponentialCarryingCapacityDemography:
         for i, (ne_c, ne_a, t0, t1, alpha) in iterator:
             mc_seed = int(rng.integers(2**31))
             self._eval_points.append(
-                _mc_eval(float(ne_c), float(ne_a), float(t0), float(t1), float(alpha),
-                         mc_seed, iterator)
+                _mc_eval(
+                    float(ne_c),
+                    float(ne_a),
+                    float(t0),
+                    float(t1),
+                    float(alpha),
+                    mc_seed,
+                    iterator,
+                )
             )
 
         return fit
@@ -734,8 +802,8 @@ class ExponentialCarryingCapacityDemography:
         return {
             "Ne_c": float(_stan_vector(fit.stan_variable("Ne_c"))[0]),
             "Ne_a": float(_stan_vector(fit.stan_variable("Ne_a"))[0]),
-            "t0":   float(_stan_vector(fit.stan_variable("t0"))[0]),
-            "t1":   float(_stan_vector(fit.stan_variable("t1"))[0]),
+            "t0": float(_stan_vector(fit.stan_variable("t0"))[0]),
+            "t1": float(_stan_vector(fit.stan_variable("t1"))[0]),
             "alpha": float(fit.stan_variable("alpha")),
             "E_pi": float(fit.stan_variable("E_pi")),
             "approx_ld": np.asarray(fit.stan_variable("approx_ld")),
@@ -767,7 +835,11 @@ class ExponentialCarryingCapacityDemography:
             ``gp_rho_r``, ``gp_alpha``.
         """
         fit = self._active_model().optimize(data=self._active_data(), **kwargs)
-        return self._extract_surrogate(fit) if self._eval_points else self._extract_approx(fit)
+        return (
+            self._extract_surrogate(fit)
+            if self._eval_points
+            else self._extract_approx(fit)
+        )
 
     def pathfinder(self, **kwargs):
         """Run Pathfinder variational inference."""

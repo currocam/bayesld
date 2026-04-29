@@ -34,10 +34,12 @@ from ._surrogate import (
 _STAN_DIR = pathlib.Path(__file__).resolve().parent.parent.parent.parent / "stan"
 _THREADS_OPTS = {"cpp_options": {"STAN_THREADS": "true"}}
 
+
 def _default_prior(diversity: np.ndarray, mutation_rate: float) -> str:
     ne_hat = float(np.mean(diversity)) / (4.0 * mutation_rate)
     log_ne_mu = float(np.log(ne_hat))
     return f"    log_Ne ~ normal({log_ne_mu:.4f}, 1.0);"
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # Stan source fragments
@@ -221,7 +223,9 @@ class ConstantDemography:
         self._ld = np.asarray(ld, dtype=float)
         self._mutation_rate = float(mutation_rate)
         self._recombination_rate = float(recombination_rate)
-        self._sequence_length = float(sequence_length) if sequence_length is not None else None
+        self._sequence_length = (
+            float(sequence_length) if sequence_length is not None else None
+        )
         self._num_samples = int(num_samples)
         self._left_bins = np.asarray(left_bins, dtype=float)
         self._right_bins = np.asarray(right_bins, dtype=float)
@@ -235,7 +239,11 @@ class ConstantDemography:
 
         self._eval_points: list[dict] = []
 
-        prior = prior if prior is not None else _default_prior(self._diversity, self._mutation_rate)
+        prior = (
+            prior
+            if prior is not None
+            else _default_prior(self._diversity, self._mutation_rate)
+        )
         self._approx_model = self._compile_approx(prior, extra_parameters)
         self._surrogate_model = self._compile_surrogate(prior, extra_parameters)
 
@@ -321,7 +329,9 @@ class ConstantDemography:
         return data
 
     def _active_data(self) -> dict:
-        return self._surrogate_stan_data() if self._eval_points else self._base_stan_data()
+        return (
+            self._surrogate_stan_data() if self._eval_points else self._base_stan_data()
+        )
 
     def _active_model(self):
         return self._surrogate_model if self._eval_points else self._approx_model
@@ -435,11 +445,15 @@ class ConstantDemography:
             )
             map_inits = {"log_Ne": float(np.log(float(active_map.stan_variable("Ne"))))}
             if self._eval_points:
-                map_inits.update({
-                    "gp_rho_r": float(active_map.stan_variable("gp_rho_r")),
-                    "gp_alpha": float(active_map.stan_variable("gp_alpha")),
-                    "beta_r": np.asarray(active_map.stan_variable("beta_r")).tolist(),
-                })
+                map_inits.update(
+                    {
+                        "gp_rho_r": float(active_map.stan_variable("gp_rho_r")),
+                        "gp_alpha": float(active_map.stan_variable("gp_alpha")),
+                        "beta_r": np.asarray(
+                            active_map.stan_variable("beta_r")
+                        ).tolist(),
+                    }
+                )
         except RuntimeError:
             warnings.warn(
                 "Surrogate MAP failed; Pathfinder will use default inits.",
@@ -687,7 +701,11 @@ class ConstantDemography:
             ``gp_rho_r``, ``gp_alpha``.
         """
         fit = self._active_model().optimize(data=self._active_data(), **kwargs)
-        return self._extract_surrogate(fit) if self._eval_points else self._extract_approx(fit)
+        return (
+            self._extract_surrogate(fit)
+            if self._eval_points
+            else self._extract_approx(fit)
+        )
 
     def pathfinder(self, **kwargs):
         """Run Pathfinder variational inference."""

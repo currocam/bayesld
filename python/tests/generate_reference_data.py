@@ -98,8 +98,13 @@ def main():
 
     # Secondary introduction
     pi, ld = deterministic.expected_secondary_introduction(
-        Ne_1=3000.0, Ne_2=3000.0, Ne_a=6000.0, t0=20.0, t1=60.0,
-        migration_rate=0.1, **DET_KWARGS,
+        Ne_1=3000.0,
+        Ne_2=3000.0,
+        Ne_a=6000.0,
+        t0=20.0,
+        t1=60.0,
+        migration_rate=0.1,
+        **DET_KWARGS,
     )
     data["deterministic"]["secondary_introduction"] = {
         "pi": to_serializable(pi),
@@ -135,8 +140,10 @@ def main():
     print("  piecewise_exponential: done")
 
     # Exponential carrying capacity
-    pi_mean, ld_mean, pi_vec, ld_mat = montecarlo.expected_exponential_carrying_capacity(
-        Ne_c=500.0, Ne_a=2000.0, t0=20.0, t1=60.0, alpha=0.01, **MC_KWARGS
+    pi_mean, ld_mean, pi_vec, ld_mat = (
+        montecarlo.expected_exponential_carrying_capacity(
+            Ne_c=500.0, Ne_a=2000.0, t0=20.0, t1=60.0, alpha=0.01, **MC_KWARGS
+        )
     )
     data["montecarlo"]["exponential_carrying_capacity"] = {
         "pi_mean": to_serializable(pi_mean),
@@ -162,8 +169,13 @@ def main():
 
     # Secondary introduction
     pi_mean, ld_mean, pi_vec, ld_mat = montecarlo.expected_secondary_introduction(
-        Ne_1=3000.0, Ne_2=3000.0, Ne_a=6000.0, t0=20.0, t1=60.0,
-        migration_rate=0.1, **MC_KWARGS,
+        Ne_1=3000.0,
+        Ne_2=3000.0,
+        Ne_a=6000.0,
+        t0=20.0,
+        t1=60.0,
+        migration_rate=0.1,
+        **MC_KWARGS,
     )
     data["montecarlo"]["secondary_introduction"] = {
         "pi_mean": to_serializable(pi_mean),

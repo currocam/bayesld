@@ -731,9 +731,7 @@ class PiecewiseExponentialDemography:
                 f"t0={t0:.1f}  alpha={alpha:.4f}"
             )
             mc_seed = int(rng.integers(2**31))
-            self._eval_points.append(
-                _mc_eval(ne_c, ne_a, t0, alpha, mc_seed, iterator)
-            )
+            self._eval_points.append(_mc_eval(ne_c, ne_a, t0, alpha, mc_seed, iterator))
 
         # Phase 2: NUTS samples initialised from Pathfinder
         pf = self._active_model().pathfinder(

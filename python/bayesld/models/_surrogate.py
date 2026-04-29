@@ -60,6 +60,7 @@ _GP_SURROGATE_MODEL = """\
 
 # ── Python utilities ───────────────────────────────────────────────────────────
 
+
 def _stan_vector(value) -> np.ndarray:
     """Convert a Stan variable to a 1-D array.
 

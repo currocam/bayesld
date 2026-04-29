@@ -188,14 +188,20 @@ class TestPiecewiseConstant:
     def test_diversity(self, model_piecewise_constant, Ne_values, t_boundaries):
         py_div, _ = self._py(Ne_values, t_boundaries, LEFT_BINS, RIGHT_BINS)
         stan_div = _div(
-            _run_stan(model_piecewise_constant, self._data(Ne_values, t_boundaries, LEFT_BINS, RIGHT_BINS))
+            _run_stan(
+                model_piecewise_constant,
+                self._data(Ne_values, t_boundaries, LEFT_BINS, RIGHT_BINS),
+            )
         )
         np.testing.assert_allclose(float(py_div), stan_div, rtol=RTOL)
 
     def test_ld(self, model_piecewise_constant, Ne_values, t_boundaries):
         _, py_ld = self._py(Ne_values, t_boundaries, LEFT_BINS, RIGHT_BINS)
         stan_ld = _ld(
-            _run_stan(model_piecewise_constant, self._data(Ne_values, t_boundaries, LEFT_BINS, RIGHT_BINS))
+            _run_stan(
+                model_piecewise_constant,
+                self._data(Ne_values, t_boundaries, LEFT_BINS, RIGHT_BINS),
+            )
         )
         np.testing.assert_allclose(np.array(py_ld), stan_ld, rtol=RTOL)
 
@@ -205,17 +211,17 @@ class TestPiecewiseConstant:
 _PE_RNG = np.random.default_rng(7)
 _PE_PARAMS = [
     pytest.param(
-        float(_PE_RNG.uniform(200, 5000)),   # Ne_c
-        float(_PE_RNG.uniform(200, 5000)),   # Ne_a
-        float(_PE_RNG.uniform(20, 400)),     # t0
-        float(_PE_RNG.uniform(1e-4, 0.05)), # alpha (> 1e-4 to avoid Taylor branch)
+        float(_PE_RNG.uniform(200, 5000)),  # Ne_c
+        float(_PE_RNG.uniform(200, 5000)),  # Ne_a
+        float(_PE_RNG.uniform(20, 400)),  # t0
+        float(_PE_RNG.uniform(1e-4, 0.05)),  # alpha (> 1e-4 to avoid Taylor branch)
         id=f"params_{i}",
     )
     for i in range(5)
 ] + [
-    pytest.param(500.0, 2000.0, 50.0, 0.0,    id="alpha_zero"),
-    pytest.param(500.0, 2000.0, 50.0, 1e-10,  id="alpha_1e-10"),
-    pytest.param(500.0, 2000.0, 50.0, 1e-7,   id="alpha_1e-7"),
+    pytest.param(500.0, 2000.0, 50.0, 0.0, id="alpha_zero"),
+    pytest.param(500.0, 2000.0, 50.0, 1e-10, id="alpha_1e-10"),
+    pytest.param(500.0, 2000.0, 50.0, 1e-7, id="alpha_1e-7"),
 ]
 
 
@@ -258,14 +264,20 @@ class TestPiecewiseExponential:
     def test_diversity(self, model_piecewise_exponential, Ne_c, Ne_a, t0, alpha):
         py_div, _ = self._py(Ne_c, Ne_a, t0, alpha, LEFT_BINS, RIGHT_BINS)
         stan_div = _div(
-            _run_stan(model_piecewise_exponential, self._data(Ne_c, Ne_a, t0, alpha, LEFT_BINS, RIGHT_BINS))
+            _run_stan(
+                model_piecewise_exponential,
+                self._data(Ne_c, Ne_a, t0, alpha, LEFT_BINS, RIGHT_BINS),
+            )
         )
         np.testing.assert_allclose(float(py_div), stan_div, rtol=RTOL)
 
     def test_ld(self, model_piecewise_exponential, Ne_c, Ne_a, t0, alpha):
         _, py_ld = self._py(Ne_c, Ne_a, t0, alpha, LEFT_BINS, RIGHT_BINS)
         stan_ld = _ld(
-            _run_stan(model_piecewise_exponential, self._data(Ne_c, Ne_a, t0, alpha, LEFT_BINS, RIGHT_BINS))
+            _run_stan(
+                model_piecewise_exponential,
+                self._data(Ne_c, Ne_a, t0, alpha, LEFT_BINS, RIGHT_BINS),
+            )
         )
         np.testing.assert_allclose(np.array(py_ld), stan_ld, rtol=RTOL)
 
@@ -277,16 +289,16 @@ _CC_PARAMS = [
     pytest.param(
         float(_CC_RNG.uniform(200, 5000)),  # Ne_c
         float(_CC_RNG.uniform(200, 5000)),  # Ne_a
-        float(_CC_RNG.uniform(10, 100)),    # t0
-        float(_CC_RNG.uniform(10, 200)),    # dt (t1 = t0 + dt, always > t0)
-        float(_CC_RNG.uniform(1e-4, 0.05)), # alpha
+        float(_CC_RNG.uniform(10, 100)),  # t0
+        float(_CC_RNG.uniform(10, 200)),  # dt (t1 = t0 + dt, always > t0)
+        float(_CC_RNG.uniform(1e-4, 0.05)),  # alpha
         id=f"params_{i}",
     )
     for i in range(5)
 ] + [
-    pytest.param(500.0, 2000.0, 20.0, 40.0, 0.0,    id="alpha_zero"),
-    pytest.param(500.0, 2000.0, 20.0, 40.0, 1e-10,  id="alpha_1e-10"),
-    pytest.param(500.0, 2000.0, 20.0, 40.0, 1e-7,   id="alpha_1e-7"),
+    pytest.param(500.0, 2000.0, 20.0, 40.0, 0.0, id="alpha_zero"),
+    pytest.param(500.0, 2000.0, 20.0, 40.0, 1e-10, id="alpha_1e-10"),
+    pytest.param(500.0, 2000.0, 20.0, 40.0, 1e-7, id="alpha_1e-7"),
 ]
 
 
@@ -331,14 +343,20 @@ class TestCarryingCapacity:
     def test_diversity(self, model_carrying_capacity, Ne_c, Ne_a, t0, dt, alpha):
         py_div, _ = self._py(Ne_c, Ne_a, t0, dt, alpha, LEFT_BINS, RIGHT_BINS)
         stan_div = _div(
-            _run_stan(model_carrying_capacity, self._data(Ne_c, Ne_a, t0, dt, alpha, LEFT_BINS, RIGHT_BINS))
+            _run_stan(
+                model_carrying_capacity,
+                self._data(Ne_c, Ne_a, t0, dt, alpha, LEFT_BINS, RIGHT_BINS),
+            )
         )
         np.testing.assert_allclose(float(py_div), stan_div, rtol=RTOL)
 
     def test_ld(self, model_carrying_capacity, Ne_c, Ne_a, t0, dt, alpha):
         _, py_ld = self._py(Ne_c, Ne_a, t0, dt, alpha, LEFT_BINS, RIGHT_BINS)
         stan_ld = _ld(
-            _run_stan(model_carrying_capacity, self._data(Ne_c, Ne_a, t0, dt, alpha, LEFT_BINS, RIGHT_BINS))
+            _run_stan(
+                model_carrying_capacity,
+                self._data(Ne_c, Ne_a, t0, dt, alpha, LEFT_BINS, RIGHT_BINS),
+            )
         )
         np.testing.assert_allclose(np.array(py_ld), stan_ld, rtol=RTOL)
 
