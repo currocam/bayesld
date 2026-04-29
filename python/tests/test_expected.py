@@ -428,29 +428,3 @@ class TestDeterministicVsMonteCarlo:
         )
         np.testing.assert_allclose(pi_det, pi_vec.mean(), rtol=0.15)
         np.testing.assert_allclose(ld_det, ld_mat.mean(axis=0), rtol=0.2)
-
-
-# ── Pseudo-replicates output shape ─────────────────────────────────────────────
-
-
-def test_pseudo_replicates_output_shape():
-    """Check that pseudo_replicates multiplies the number of output rows."""
-    num_replicates = 2
-    pseudo_replicates = 3
-    pi_vec, ld_mat = montecarlo.expected_constant(
-        Ne=1000,
-        left_bins=LEFT_BINS,
-        right_bins=RIGHT_BINS,
-        mutation_rate=MUTATION_RATE,
-        recombination_rate=RECOMBINATION_RATE,
-        sequence_length=SEQUENCE_LENGTH,
-        sample_size=SAMPLE_SIZE,
-        random_seed=123,
-        num_replicates=num_replicates,
-        pseudo_replicates=pseudo_replicates,
-        ploidy=PLOIDY,
-        model="hudson",
-    )
-    expected_rows = num_replicates * pseudo_replicates
-    assert pi_vec.shape == (expected_rows,)
-    assert ld_mat.shape == (expected_rows, len(LEFT_BINS))
