@@ -23,12 +23,17 @@ def _run_replicate(
     right_bins,
     ploidy,
     model,
+    pseudo_replicates,
 ):
-    """Run a single Monte Carlo replicate and return (pi, ld_per_bin)."""
+    """Run a single Monte Carlo replicate and return lists of (pi, ld_per_bin).
+
+    When pseudo_replicates > 1, the ancestry is simulated once and mutations
+    are overlaid multiple times with different seeds.
+    """
     from . import data_from_tree_sequence   # local import for joblib pickling
 
     demography = msprime.Demography.from_demes(demography_demes)
-    ts = msprime.sim_ancestry(
+    ts_anc = msprime.sim_ancestry(
         samples={0: sample_size},
         demography=demography,
         recombination_rate=recombination_rate,
@@ -37,19 +42,31 @@ def _run_replicate(
         ploidy=ploidy,
         model=model,
     )
-    ts = msprime.sim_mutations(
-        ts, rate=mutation_rate, random_seed=seed, model=msprime.BinaryMutationModel()
-    )
 
-    stats = data_from_tree_sequence(
-        ts=ts,
-        recombination_rate=recombination_rate,
-        left_bins_morgan=left_bins,
-        right_bins_morgan=right_bins,
-        ploidy=ploidy,
-        progress_bar=False,
-    )
-    return stats["mean_genetic_diversity"], stats["mean_linkage_disequilibrium"]
+    if pseudo_replicates == 1:
+        mut_seeds = [seed]
+    else:
+        rng = np.random.default_rng(seed)
+        mut_seeds = rng.integers(1, 2**32 - 1, size=pseudo_replicates)
+
+    results = []
+    for ms in mut_seeds:
+        ts = msprime.sim_mutations(
+            ts_anc, rate=mutation_rate, random_seed=int(ms),
+            model=msprime.BinaryMutationModel(),
+        )
+        stats = data_from_tree_sequence(
+            ts=ts,
+            recombination_rate=recombination_rate,
+            left_bins_morgan=left_bins,
+            right_bins_morgan=right_bins,
+            ploidy=ploidy,
+            progress_bar=False,
+        )
+        results.append(
+            (stats["mean_genetic_diversity"], stats["mean_linkage_disequilibrium"])
+        )
+    return results
 
 
 def _parallel_mc(
@@ -66,6 +83,7 @@ def _parallel_mc(
     random_seed,
     num_replicates,
     num_workers,
+    pseudo_replicates,
 ):
     """Run `num_replicates` MC simulations in parallel via joblib.
 
@@ -77,11 +95,13 @@ def _parallel_mc(
         Demographic parameters forwarded to build_demography.
     num_workers : int
         Number of parallel workers.  -1 uses all available cores (joblib convention).
+    pseudo_replicates : int
+        Number of independent mutation overlays per ancestry simulation.
 
     Returns
     -------
-    pi_replicates : ndarray (num_replicates,)
-    ld_replicates : ndarray (num_replicates, num_bins)
+    pi_replicates : ndarray (num_replicates * pseudo_replicates,)
+    ld_replicates : ndarray (num_replicates * pseudo_replicates, num_bins)
     """
     demography = build_demography(*params)
     dem_demes = demography.to_demes()
@@ -93,12 +113,15 @@ def _parallel_mc(
         delayed(_run_replicate)(
             int(s), sample_size, dem_demes, recombination_rate,
             sequence_length, mutation_rate, left_bins, right_bins, ploidy, model,
+            pseudo_replicates,
         )
         for s in seeds
     )
 
-    pi = np.array([r[0] for r in results], dtype=np.float64)
-    ld = np.array([r[1] for r in results], dtype=np.float64)
+    # Flatten: each result is a list of (pi, ld) tuples
+    flat = [pair for replicate in results for pair in replicate]
+    pi = np.array([r[0] for r in flat], dtype=np.float64)
+    ld = np.array([r[1] for r in flat], dtype=np.float64)
     return pi, ld
 
 
@@ -115,6 +138,7 @@ def expected_constant(
     sample_size,
     random_seed,
     num_replicates=1,
+    pseudo_replicates=1,
     ploidy=2,
     model=_DEFAULT_MODEL,
     num_workers=-1,
@@ -130,14 +154,15 @@ def expected_constant(
     sample_size : int  — diploid individuals
     random_seed : int
     num_replicates : int
+    pseudo_replicates : int — mutation overlays per ancestry simulation
     ploidy : int
     model : msprime ancestry model  — default is SMCK(k=1)
     num_workers : int  — joblib parallel workers (-1 = all cores)
 
     Returns
     -------
-    pi_replicates : ndarray (num_replicates,)
-    ld_replicates : ndarray (num_replicates, num_bins)
+    pi_replicates : ndarray (num_replicates * pseudo_replicates,)
+    ld_replicates : ndarray (num_replicates * pseudo_replicates, num_bins)
     """
     left_bins = np.asarray(left_bins)
     right_bins = np.asarray(right_bins)
@@ -151,7 +176,7 @@ def expected_constant(
         build_demography, (Ne,),
         left_bins, right_bins, mutation_rate, recombination_rate,
         sequence_length, sample_size, ploidy, model,
-        random_seed, num_replicates, num_workers,
+        random_seed, num_replicates, num_workers, pseudo_replicates,
     )
 
 
@@ -168,6 +193,7 @@ def expected_piecewise_exponential(
     sample_size,
     random_seed,
     num_replicates=1,
+    pseudo_replicates=1,
     ploidy=2,
     model=_DEFAULT_MODEL,
     num_workers=-1,
@@ -188,14 +214,15 @@ def expected_piecewise_exponential(
     sample_size : int
     random_seed : int
     num_replicates : int
+    pseudo_replicates : int — mutation overlays per ancestry simulation
     ploidy : int
     model : msprime ancestry model  — default is SMCK(k=1)
     num_workers : int  — joblib parallel workers (-1 = all cores)
 
     Returns
     -------
-    pi_replicates : ndarray (num_replicates,)
-    ld_replicates : ndarray (num_replicates, num_bins)
+    pi_replicates : ndarray (num_replicates * pseudo_replicates,)
+    ld_replicates : ndarray (num_replicates * pseudo_replicates, num_bins)
     """
     left_bins = np.asarray(left_bins)
     right_bins = np.asarray(right_bins)
@@ -210,7 +237,7 @@ def expected_piecewise_exponential(
         build_demography, (Ne_c, Ne_a, t0, alpha),
         left_bins, right_bins, mutation_rate, recombination_rate,
         sequence_length, sample_size, ploidy, model,
-        random_seed, num_replicates, num_workers,
+        random_seed, num_replicates, num_workers, pseudo_replicates,
     )
 
 
@@ -228,6 +255,7 @@ def expected_exponential_carrying_capacity(
     sample_size,
     random_seed,
     num_replicates=1,
+    pseudo_replicates=1,
     ploidy=2,
     model=_DEFAULT_MODEL,
     num_workers=-1,
@@ -251,14 +279,15 @@ def expected_exponential_carrying_capacity(
     sample_size : int
     random_seed : int
     num_replicates : int
+    pseudo_replicates : int — mutation overlays per ancestry simulation
     ploidy : int
     model : msprime ancestry model  — default is SMCK(k=1)
     num_workers : int  — joblib parallel workers (-1 = all cores)
 
     Returns
     -------
-    pi_replicates : ndarray (num_replicates,)
-    ld_replicates : ndarray (num_replicates, num_bins)
+    pi_replicates : ndarray (num_replicates * pseudo_replicates,)
+    ld_replicates : ndarray (num_replicates * pseudo_replicates, num_bins)
     """
     left_bins = np.asarray(left_bins)
     right_bins = np.asarray(right_bins)
@@ -274,7 +303,7 @@ def expected_exponential_carrying_capacity(
         build_demography, (Ne_c, Ne_a, t0, t1, alpha),
         left_bins, right_bins, mutation_rate, recombination_rate,
         sequence_length, sample_size, ploidy, model,
-        random_seed, num_replicates, num_workers,
+        random_seed, num_replicates, num_workers, pseudo_replicates,
     )
 
 
@@ -289,6 +318,7 @@ def expected_piecewise_constant(
     sample_size,
     random_seed,
     num_replicates=1,
+    pseudo_replicates=1,
     ploidy=2,
     model=_DEFAULT_MODEL,
     num_workers=-1,
@@ -308,14 +338,15 @@ def expected_piecewise_constant(
     sample_size : int
     random_seed : int
     num_replicates : int
+    pseudo_replicates : int — mutation overlays per ancestry simulation
     ploidy : int
     model : msprime ancestry model  — default is SMCK(k=1)
     num_workers : int  — joblib parallel workers (-1 = all cores)
 
     Returns
     -------
-    pi_replicates : ndarray (num_replicates,)
-    ld_replicates : ndarray (num_replicates, num_bins)
+    pi_replicates : ndarray (num_replicates * pseudo_replicates,)
+    ld_replicates : ndarray (num_replicates * pseudo_replicates, num_bins)
     """
     Ne_values    = list(Ne_values)
     t_boundaries = list(t_boundaries)
@@ -333,5 +364,5 @@ def expected_piecewise_constant(
         build_demography, (Ne_values, t_boundaries),
         left_bins, right_bins, mutation_rate, recombination_rate,
         sequence_length, sample_size, ploidy, model,
-        random_seed, num_replicates, num_workers,
+        random_seed, num_replicates, num_workers, pseudo_replicates,
     )
