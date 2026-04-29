@@ -175,7 +175,9 @@ def expected_piecewise_exponential(
             )
             / 2
         )
-        piece2 = (2 * Ne_a + t0) * jnp.exp(-(-1 + jnp.exp(t0 * alpha)) / alpha / Ne_c / 2)
+        piece2 = (2 * Ne_a + t0) * jnp.exp(
+            -(-1 + jnp.exp(t0 * alpha)) / alpha / Ne_c / 2
+        )
         piece1_taylor = (
             -2 * jnp.exp(-0.1e1 / Ne_c * t0 / 2) * Ne_c
             - jnp.exp(-0.1e1 / Ne_c * t0 / 2) * t0
@@ -345,7 +347,9 @@ def expected_exponential_carrying_capacity(
             -1 / Ne_c * t1 / 2
         ) + 2 * Ne_c
         expected_tmrca = jnp.where(
-            jnp.abs(alpha) < ALPHA_EPSILON, expected_tmrca_taylor, expected_tmrca_nonzero
+            jnp.abs(alpha) < ALPHA_EPSILON,
+            expected_tmrca_taylor,
+            expected_tmrca_nonzero,
         )
         return expected_tmrca * 2 * mutation_rate
 
@@ -428,11 +432,12 @@ def expected_piecewise_constant(
     """
     u_i = jnp.asarray(left_bins)
     u_j = jnp.asarray(right_bins)
-    Ne_values = jnp.asarray(Ne_values, dtype=jnp.float64) / 2 * ploidy
-    t_boundaries = jnp.asarray(t_boundaries, dtype=jnp.float64)
+    Ne_values = jnp.asarray(Ne_values) / 2 * ploidy
+    t_boundaries = jnp.asarray(t_boundaries)
     # Split into finite epochs and last infinite epoch
     Ne_finite = Ne_values[:-1]
     Ne_last = Ne_values[-1]
+    eltype = jax.typeof(Ne_last)
 
     # Compute expected genetic diversity (heterozygosity)
     def compute_diversity():
@@ -452,9 +457,9 @@ def expected_piecewise_constant(
 
         # Scan over finite epochs
         init_carry = (
-            jnp.float64(0.0),  # expected_tmrca
-            jnp.float64(0.0),  # Gamma_prev
-            jnp.float64(0.0),  # t_prev
+            0.0,  # expected_tmrca
+            0.0,  # Gamma_prev
+            0.0,  # t_prev
         )
         (tmrca_finite, Gamma_finite, t_start_last), _ = jax.lax.scan(
             diversity_step, init_carry, (Ne_finite, t_boundaries)
@@ -497,8 +502,8 @@ def expected_piecewise_constant(
         # Scan over finite epochs
         init_carry = (
             jnp.zeros_like(u_col),  # total_integral
-            jnp.float64(0.0),       # Gamma_prev
-            jnp.float64(0.0),       # t_prev
+            0.0,  # Gamma_prev
+            0.0,  # t_prev
         )
         (integral_finite_acc, Gamma_finite, t_start_last), _ = jax.lax.scan(
             ld_step, init_carry, (Ne_finite, t_boundaries)
