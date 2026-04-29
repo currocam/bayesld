@@ -1,0 +1,221 @@
+
+\documentclass[9pt,onecolumn,twoside]{preprint}
+% Use the documentclass option 'lineno' to view line numbers
+\setlength{\marginparwidth}{2cm}
+\usepackage{subcaption}
+
+\title{Title}
+
+\author[$\ast$,1]{First Author}
+
+\affil[$\ast$]{Affiliation}
+
+\keywords{Keyword one, keyword two}
+
+\runningtitle{Running title} % For use in the footer
+\runningauthor{Author \textit{et al.}}
+
+%%% Abstract %%%%%%%%%%%%%%%%%%
+\begin{abstract}
+Abstract text goes here.
+\end{abstract}
+%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\setboolean{displaycopyright}{true}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{firststyle}
+
+\setboolean{displaylineno}{true}
+\ifthenelse{\boolean{displaylineno}}{\linenumbers}{}
+
+\section{Introduction}
+
+
+There is a long tradition of studying effective population size, $N_e$, in evolutionary biology.
+
+More recently, effective population size has been proposed as a key indicator in conservation biology by different organisations\citep{van_Oosterhout_2026}.
+
+The study of $N_e$ is typically based on nucleotide diversity or coalescence of alleles and "it is largely shaped by the genetic effective size of the ancestral population many thousands of generations in the past" \citep{van_Oosterhout_2026}.
+
+Methods like PSMC, MSMC or Bayesian Skyline Plots provide limited resolution to study recent Ne changes\citep{van_Oosterhout_2026}.
+
+Site-summary statistics depend on mutations, which accumulate slowly. In contrast, recombination events happen much more frequently, resulting in a stronger signal in genetic data. Because of this, recent methods that estimate very recent Ne (<100 generations ago) often rely on studying identity-by-descent (IBD) sharing in a population, either directly (via IBD tracts) or indirectly via linkage disequilibrium (LD).
+
+In this work, we investigate to what extent we can exploit the proxy between recent shared ancestry and long-range LD proposed by \citet{Fournier_2023} in conservation genomics and outside non-human populations and propose a novel Bayesian inference framework that combines both predictions of LD and heterozygosity to fit parametric models of $Ne(t)$ using unphased data.
+
+Mention Ne/N ratio \citep{Waples_2024}.
+
+
+\section{Tractable summary statistic}
+
+\subsection{$\pi$ for ancient Ne, $\mathbb E[X_iX_jY_iY_j]$ for recent Ne}
+
+Let us consider a set of bi-allelic loci scattered across the genome in a diploid organism. As usual, let's consider that we have access to the states $\{0, 1, 2\}$ of each locus for a set of individuals.
+
+The genetic diversity or sample heterozygosity, denoted as $\pi$, is a classical genetic summary statistic. It is defined as XXX. The genome-wide average genetic diversity within the sample set is directly related to $Ne$, as decreases (or increases) in $Ne$ result in a decrease (or increase) in genetic diversity.
+
+$\mathbb E[X_iX_jY_iY_j]$ is a measure of linkage disequilibrium and it measures the correlation between loci that are $u$ units apart. A pair of neutral loci that are physically in the same chromosome experience some non-zero amount of correlation which decays with distance (more opportunities to be separated during meiosis by a recombination event). However, it also depends on $Ne$. This is because higher population sizes result in a longer time to the most recent common ancestors which also results in more recombination events. Therefore, $\mathbb E[X_iX_jY_iY_j]$ is related with $Ne$, as decreases (or increases) in $Ne$ result in an increase (or decrease) in $\mathbb E[X_iX_jY_iY_j]$.
+
+Although the sample heterozygosity is informative of $Ne$, it responds slowly. This is a phenomenon known as genetic drift debt. Instead, $\mathbb E[X_iX_jY_iY_j]$ is more informative of very recent $Ne$. As an extreme example, let's study the impact of a strong bottleneck (that results in a 10x decrease in $Ne$) that happens as recently as five generations ago (see fig 1a). Whereas we observe a loss in sample heterozygosity (fig 1b), it is small compared with the rapid increase in LD (fig 1c).
+
+Fig 1d and fig1e show the relative change (compared with the values from a non-affected population) as the bottleneck happens more and more generations ago. Hopefully, one can see that sample heterozygosity is not informative of the recent past whereas LD is not informative of the ancient past. XXX.
+
+\begin{figure}[!ht]
+	\centering
+	% --- Row 1: a, ba, bb ---
+	\begin{subfigure}[t]{0.32\textwidth}
+		\centering
+		\includegraphics[width=\linewidth]{figures/conceptual/conceptual_figure_panel_a.pdf}
+		\caption{Two demographic scenarios: constant $N_e$ and a bottleneck event.}
+		\label{fig:conceptual:demography}
+	\end{subfigure}
+	\hfill
+	\begin{subfigure}[t]{0.32\textwidth}
+		\centering
+		\includegraphics[width=\linewidth]{figures/conceptual/conceptual_figure_panel_ba.pdf}
+		\caption{Distribution of per-window nucleotide diversity ($\pi$).}
+		\label{fig:conceptual:pi_hist}
+	\end{subfigure}
+	\hfill
+	\begin{subfigure}[t]{0.32\textwidth}
+		\centering
+		\includegraphics[width=\linewidth]{figures/conceptual/conceptual_figure_panel_bb.pdf}
+		\caption{LD decay curves with jittered replicates and mean.}
+		\label{fig:conceptual:ld}
+	\end{subfigure}
+
+	\vspace{0.5em}
+
+	% --- Row 2: c, d ---
+	\begin{subfigure}[t]{0.48\textwidth}
+		\centering
+		\includegraphics[width=\linewidth]{figures/conceptual/conceptual_figure_panel_c.pdf}
+		\caption{Relative change in nucleotide diversity ($\pi$) as a function of bottleneck start time.}
+		\label{fig:conceptual:pi}
+	\end{subfigure}
+	\hfill
+	\begin{subfigure}[t]{0.48\textwidth}
+		\centering
+		\includegraphics[width=\linewidth]{figures/conceptual/conceptual_figure_panel_d.pdf}
+		\caption{Relative change in LD at the shortest distance bin as a function of bottleneck start time.}
+		\label{fig:conceptual:ld_change}
+	\end{subfigure}
+	\caption{Comparison of summary statistics under constant $N_e$ vs.\ a recent bottleneck. (a)~Demographic models. (b\textsubscript{a})~Nucleotide diversity distributions. (b\textsubscript{b})~LD decay curves. (c)~$\pi$ vs.\ bottleneck start time. (d)~LD vs.\ bottleneck start time.}
+	\label{fig:conceptual}
+\end{figure}
+
+\subsection{Analytical predictions}
+
+In terms of coalescence, the effective population size can be defined in terms of the inverse of the instantaneous coalescence rate, that we denote simply as $f(t)$. We then define
+
+\begin{equation}
+	N_e(t) = \frac{1}{2f(t)}
+\end{equation}
+
+We need efficient analytical predictions for inference. For the case of $\pi$, it is well-known that
+
+\begin{equation}
+	\mathbb E[\pi \mid \theta] = 4 \mu \int_0^\infty t f(t)\,dt = 2 \mu \mathbb E[N_e]
+\end{equation}
+
+
+where $\mu$ is the mutation rate. From this equation it is apparent why the $\pi$ is weakly informative of recent $N_e$, as its value depends on $\mathbb E[N_e]$, that is, the mean value from 0 to infinity, which will most likely be dominated by the long tail.
+
+The summary statistic $\mathbb E[X_iX_jY_iY_j]$, instead, has no known analytical prediction. Still, one can always obtain an approximate but unbiased estimate via Monte Carlo simulations:
+
+
+XXX: add classical equation.
+
+Although unbiased, this estimator is expensive. \citet{Fournier_2023} found the approximation expression and made an elegant link between long-range LD and IBD-sharing. They suggested that pairs of high-frequency loci (with minor allele frequency greater than 0.25) that are not very close ($u > 0.5 cM$) satisfy that $\mathbb{ E}[X_iX_j \mid\text{IBD}] \approx \mathbb{ E}[X^2] = 1$ and $\mathbb{ E}[X_iX_j \mid\neg\text{IBD}] \approx \mathbb{ E}[X]^2 = 0$. Under these assumptions, it follows that
+
+\begin{align}
+	\mathbb{E}[X_{i}Y_{i}X_{j}Y_{j}]
+	 & = S(u)\, \mathbb{E}[X_{i}Y_{i}X_{j}Y_{j} \mid \text{IBD}]
+	+ (1 - S(u))\, \mathbb{E}[X_{i}Y_{i}X_{j}Y_{j} \mid \neg\text{IBD}] = S(u)
+\end{align}
+
+where $S(u)$ is the probability that two loci that are $u$ Morgans apart are in IBD. For the case of diploid (unphased) individuals, \citet{Fournier_2023} proposed to neglect correlations induced by more than one pair of haplotypes being in IBD and suggested that
+\begin{align}
+	\mathbb{E}[G_{x,i} G_{y,i} G_{x,j} G_{y,j}]
+	 & = \mathbb{E}[(X_{i,1}+X_{i,2})(Y_{i,1}+Y_{i,2})(X_{j,1}+X_{j,2})(Y_{j,1}+Y_{j,2})] \\
+	 & = \frac{1}{4} \sum_{\alpha,\beta,\gamma,\delta = \{1,2\}}
+	\mathbb{E}[X_{i,\alpha} X_{j,\beta} Y_{i,\gamma} Y_{j,\delta}]                        \\
+	 & \approx \frac{1}{4} \sum_{\alpha,\beta = \{1,2\}}
+	\mathbb{E}[X_{i,\alpha} X_{j,\beta} Y_{i,\alpha} Y_{j,\beta}]                         \\
+	 & \approx \frac{1}{4} \sum_{\alpha,\beta = \{1,2\}} S(u) = S(u)
+\end{align}
+
+where $G_{x,i}$ and $G_{y,i}$ are the centred and standardised unphased diploid genotypes.
+
+\citet{Fournier_2023}'s proxy, although approximate, gives an intuition of why linkage disequilibrium is informative of recent demography, as, essentially:
+
+\begin{equation}
+	\mathbb E[\mathbb E[X_iX_jY_iY_j]] \approx \int_0^\infty \exp(-2ty) f(t)\,dt
+\end{equation}
+
+which can be interpreted as assigning weights to each time in the past that decays exponentially.
+
+
+\subsection{Biased but accurate predictor}
+
+When predicting $E[X_i X_j Y_i Y_j]$ from a Wright-Fisher population with equation X, we may decompose the error in two sources. First, the error introduced in computing $\int_0^\infty \exp(-2ty) f(t)\,dt$ under the SMC' or SMC to obtain analytical predictions. Second, the "intrinsic" error of the approximation when considering that we use $\int_0^\infty \exp(-2ty) f(t)\,dt$ as a proxy for $E[X_iX_jY_iY_j]$.
+
+We found that the first source of error has relatively low impact across a wide range of populations (see XXX). Interestingly, we found the bias introduced by the second error decreases as $N_e$ grows.
+
+\begin{figure}[!ht]
+	\centering
+	% --- Row 1: Piecewise constant ---
+	\begin{subfigure}[t]{0.32\textwidth}
+		\centering
+		\includegraphics[width=\linewidth]{figures/example_bias/example_bias_piecewise_skeleton.pdf}
+		\caption{Piecewise-constant demography.}
+		\label{fig:bias:pw_skeleton}
+	\end{subfigure}
+	\hfill
+	\begin{subfigure}[t]{0.32\textwidth}
+		\centering
+		\includegraphics[width=\linewidth]{figures/example_bias/example_bias_piecewise_small.pdf}
+		\caption{Piecewise constant, $x = 1$.}
+		\label{fig:bias:pw_small}
+	\end{subfigure}
+	\hfill
+	\begin{subfigure}[t]{0.32\textwidth}
+		\centering
+		\includegraphics[width=\linewidth]{figures/example_bias/example_bias_piecewise_large.pdf}
+		\caption{Piecewise constant, $x = 10$.}
+		\label{fig:bias:pw_large}
+	\end{subfigure}
+
+	\vspace{0.5em}
+
+	% --- Row 2: Exponential ---
+	\begin{subfigure}[t]{0.32\textwidth}
+		\centering
+		\includegraphics[width=\linewidth]{figures/example_bias/example_bias_exponential_skeleton.pdf}
+		\caption{Piecewise exponential demography.}
+		\label{fig:bias:exp_skeleton}
+	\end{subfigure}
+	\hfill
+	\begin{subfigure}[t]{0.32\textwidth}
+		\centering
+		\includegraphics[width=\linewidth]{figures/example_bias/example_bias_exponential_small.pdf}
+		\caption{Piecewise exponential, $x = 1$.}
+		\label{fig:bias:exp_small}
+	\end{subfigure}
+	\hfill
+	\begin{subfigure}[t]{0.32\textwidth}
+		\centering
+		\includegraphics[width=\linewidth]{figures/example_bias/example_bias_exponential_large.pdf}
+		\caption{Piecewise exponential, $x = 10$.}
+		\label{fig:bias:exp_large}
+	\end{subfigure}
+	\caption{Deterministic predictions vs.\ Monte Carlo simulations (SMC'/SMC and DTWF) for expected LD under two demographic models scaled by a factor $x$. (a)~Piecewise-constant skeleton. (b\textsubscript{a})~Small piecewise constant. (b\textsubscript{c})~Large piecewise constant. (c)~Piecewise-exponential skeleton. (d\textsubscript{a})~Small piecewise exponential. (d\textsubscript{c})~Large piecewise exponential.}
+	\label{fig:bias}
+\end{figure}
+
+\bibliography{references}
+
+\end{document}

@@ -1,8 +1,8 @@
-#!/usr/bin/env -S uv run --script
+#!/usr/bin/env -S uv run --script --isolated
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "bayesld @ git+https://github.com/currocam/bayesld.git@95f5051",
+#     "bayesld @ git+https://github.com/currocam/bayesld.git@caca14b",
 #     "marimo==0.23.3",
 #     "numpy==2.2.6",
 #     "matplotlib==3.10.9",
@@ -132,17 +132,49 @@ def _(ne1, ne2):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    ## Panel B: Full LD curve
+    ## Panel Ba: Histogram of per-window nucleotide diversity
     """)
     return
 
 
 @app.cell
-def _(baseline_linkage, left_bins, right_bins, sim_linkage, times):
-    fig_b, ax_b = plt.subplots(
+def _(baseline_div, sim_div, times):
+    fig_ba, ax_ba = plt.subplots(
         figsize=(ONE_HALF_COL, ONE_HALF_COL * 0.75), dpi=300, constrained_layout=True
     )
     t5_idx = np.where(times == 5)[0][0]
+
+    bplot = ax_ba.boxplot(
+        [baseline_div, sim_div[t5_idx]],
+        labels=["Constant", "Bottleneck"],
+        patch_artist=True,
+        widths=0.5,
+    )
+    for patch, color in zip(bplot["boxes"], ["C5", "C1"]):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.6)
+    for median in bplot["medians"]:
+        median.set_color("black")
+    ax_ba.set_ylabel(r"Nucleotide diversity ($\pi$)")
+
+    fig_ba.savefig("conceptual_figure_panel_ba.pdf")
+    fig_ba
+    return (t5_idx,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Panel Bb: Full LD curve
+    """)
+    return
+
+
+@app.cell
+def _(baseline_linkage, left_bins, right_bins, sim_linkage, t5_idx):
+    fig_bb, ax_bb = plt.subplots(
+        figsize=(ONE_HALF_COL, ONE_HALF_COL * 0.75), dpi=300, constrained_layout=True
+    )
     _x = (left_bins + right_bins) / 2 * 100
     _jitter_scale = (_x[1] - _x[0]) * 0.15
     _rng = np.random.default_rng(42)
@@ -154,15 +186,14 @@ def _(baseline_linkage, left_bins, right_bins, sim_linkage, times):
             ax.plot(x + _jitter, data[i], ".", color=color, alpha=0.2, markersize=3)
         ax.plot(x, data.mean(axis=0), "-", color=color, lw=2, label=label)
 
-    _plot_jittered(ax_b, _x, baseline_linkage, "C5", "Constant")
-    _plot_jittered(ax_b, _x, sim_linkage[t5_idx], "C1", "Bottleneck")
+    _plot_jittered(ax_bb, _x, baseline_linkage, "C5", "Constant")
+    _plot_jittered(ax_bb, _x, sim_linkage[t5_idx], "C1", "Bottleneck")
 
-    ax_b.set_xlabel("Genetic distance (centimorgan)")
-    ax_b.set_ylabel(r"Linkage disequilibrium $\mathbb E[X_iX_jY_iY_j]$")
-    # ax_b.set_xscale("log")
-    ax_b.legend()
-    fig_b.savefig("conceptual_figure_panel_b.pdf")
-    fig_b
+    ax_bb.set_xlabel("Genetic distance (centimorgan)")
+    ax_bb.set_ylabel(r"Linkage disequilibrium $\mathbb E[X_iX_jY_iY_j]$")
+    ax_bb.legend()
+    fig_bb.savefig("conceptual_figure_panel_bb.pdf")
+    fig_bb
     return
 
 

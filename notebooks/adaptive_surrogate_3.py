@@ -23,23 +23,23 @@ def _():
 @app.cell
 def _(bayesld, np):
     left_bins, right_bins = bayesld.linear_bins()
-    mutation_rate    = 1e-8
+    mutation_rate = 1e-8
     recombination_rate = 1e-8
-    sequence_length  = right_bins[-1] * 2 / recombination_rate
-    sample_size      = 30
-    num_replicates   = 10
-    n_bins           = len(left_bins)
+    sequence_length = right_bins[-1] * 2 / recombination_rate
+    sample_size = 30
+    num_replicates = 10
+    n_bins = len(left_bins)
 
     # Piecewise-constant model: 2 epochs
-    n_epochs         = 2
-    Ne_values_true   = [1000.0, 10000.0]   # Ne_values[1]=1000, Ne_values[2]=10000
-    t_boundaries_true = [20.0]              # single boundary at t=20 generations
+    n_epochs = 2
+    Ne_values_true = [1000.0, 10000.0]  # Ne_values[1]=1000, Ne_values[2]=10000
+    t_boundaries_true = [20.0]  # single boundary at t=20 generations
 
     # Shared lognormal prior for all Ne epochs and all log-time boundaries
-    log_Ne_prior_mu    = np.log(1000.0)
+    log_Ne_prior_mu = np.log(1000.0)
     log_Ne_prior_sigma = 2.0
-    log_t_prior_mu     = np.log(20.0)
-    log_t_prior_sigma  = 1.5
+    log_t_prior_mu = np.log(20.0)
+    log_t_prior_sigma = 1.5
     return (
         Ne_values_true,
         left_bins,
@@ -92,9 +92,9 @@ def _(
             model="hudson",
         )
 
-    mean_div     = float(np.mean(pi_data))
+    mean_div = float(np.mean(pi_data))
     est_sigma_div = float(np.std(pi_data, ddof=1) / np.sqrt(num_replicates))
-    mean_ld      = np.array(np.mean(ld_data, axis=0), dtype=float)
+    mean_ld = np.array(np.mean(ld_data, axis=0), dtype=float)
     est_sigma_ld = np.array(
         np.std(ld_data, axis=0, ddof=1) / np.sqrt(num_replicates), dtype=float
     )
@@ -127,23 +127,23 @@ def _(
     sample_size,
 ):
     base_stan_data = {
-        "n_bins":         n_bins,
-        "left_bins":      left_bins.tolist(),
-        "right_bins":     right_bins.tolist(),
-        "mutation_rate":  mutation_rate,
-        "sample_size":    sample_size,
-        "mean_div":       mean_div,
-        "est_sigma_div":  est_sigma_div,
-        "mean_ld":        mean_ld.tolist(),
-        "est_sigma_ld":   est_sigma_ld.tolist(),
-        "n_epochs":       n_epochs,
-        "log_Ne_prior_mu":    log_Ne_prior_mu,
+        "n_bins": n_bins,
+        "left_bins": left_bins.tolist(),
+        "right_bins": right_bins.tolist(),
+        "mutation_rate": mutation_rate,
+        "sample_size": sample_size,
+        "mean_div": mean_div,
+        "est_sigma_div": est_sigma_div,
+        "mean_ld": mean_ld.tolist(),
+        "est_sigma_ld": est_sigma_ld.tolist(),
+        "n_epochs": n_epochs,
+        "log_Ne_prior_mu": log_Ne_prior_mu,
         "log_Ne_prior_sigma": log_Ne_prior_sigma,
-        "log_t_prior_mu":     log_t_prior_mu,
-        "log_t_prior_sigma":  log_t_prior_sigma,
+        "log_t_prior_mu": log_t_prior_mu,
+        "log_t_prior_sigma": log_t_prior_sigma,
         # Hilbert-space GP approximation settings
         "hsgp_c": 1.5,
-        "hsgp_m": 20,    # basis functions per dimension (D × 20 total, D = 2*n_epochs-1 = 3)
+        "hsgp_m": 20,  # basis functions per dimension (D × 20 total, D = 2*n_epochs-1 = 3)
     }
     return (base_stan_data,)
 
@@ -152,7 +152,7 @@ def _(
 def _(Path, cmdstanpy, mo):
     _stan_dir = Path(__file__).parent.parent / "stan"
     with mo.status.spinner("Compiling Stan models..."):
-        model1   = cmdstanpy.CmdStanModel(
+        model1 = cmdstanpy.CmdStanModel(
             stan_file=str(_stan_dir / "piecewise_constant_ne.stan")
         )
         model_gp = cmdstanpy.CmdStanModel(
@@ -193,30 +193,47 @@ def _(
 
     def _mc_eval(ne_values, t_boundaries, seed, rng):
         _, _ld_mc = mc2.expected_piecewise_constant(
-            list(ne_values), list(t_boundaries),
-            left_bins, right_bins, mutation_rate,
-            recombination_rate, sequence_length, sample_size,
-            random_seed=int(seed), num_replicates=num_replicates, ploidy=2,
+            list(ne_values),
+            list(t_boundaries),
+            left_bins,
+            right_bins,
+            mutation_rate,
+            recombination_rate,
+            sequence_length,
+            sample_size,
+            random_seed=int(seed),
+            num_replicates=num_replicates,
+            ploidy=2,
         )
         _ld_mc = np.array(_ld_mc)
         _, _ld_det = det.expected_piecewise_constant(
-            ne_values, t_boundaries,
-            left_bins, right_bins, mutation_rate,
-            sample_size=sample_size, ploidy=2,
+            ne_values,
+            t_boundaries,
+            left_bins,
+            right_bins,
+            mutation_rate,
+            sample_size=sample_size,
+            ploidy=2,
         )
         loglik_det = _ld_loglik(np.array(_ld_det))
         _T_hat = _ld_loglik(_ld_mc.mean(axis=0))
-        _boot_lls = np.array([
-            _ld_loglik(_ld_mc[rng.integers(0, num_replicates, size=num_replicates)].mean(axis=0))
-            for _ in range(_B)
-        ])
+        _boot_lls = np.array(
+            [
+                _ld_loglik(
+                    _ld_mc[rng.integers(0, num_replicates, size=num_replicates)].mean(
+                        axis=0
+                    )
+                )
+                for _ in range(_B)
+            ]
+        )
         _bias = _boot_lls.mean() - _T_hat
         return {
-            "ne_values":    [float(v) for v in ne_values],
+            "ne_values": [float(v) for v in ne_values],
             "t_boundaries": [float(t) for t in t_boundaries],
-            "loglik_det":   loglik_det,
-            "bc_loglik":    _T_hat - _bias,
-            "epsilon":      float(_boot_lls.std(ddof=1)),
+            "loglik_det": loglik_det,
+            "bc_loglik": _T_hat - _bias,
+            "epsilon": float(_boot_lls.std(ddof=1)),
         }
 
     def _make_gp_data(eval_pts):
@@ -225,32 +242,43 @@ def _(
             **base_stan_data,
             "n_eval": len(eval_pts),
             "eval_log_params": [
-                [np.log(v) for v in p["ne_values"]] + [np.log(t) for t in p["t_boundaries"]]
+                [np.log(v) for v in p["ne_values"]]
+                + [np.log(t) for t in p["t_boundaries"]]
                 for p in eval_pts
             ],
             "eval_loglik_det": [p["loglik_det"] for p in eval_pts],
-            "eval_bc_loglik":  [p["bc_loglik"]  for p in eval_pts],
-            "eval_epsilon":    [p["epsilon"]     for p in eval_pts],
+            "eval_bc_loglik": [p["bc_loglik"] for p in eval_pts],
+            "eval_epsilon": [p["epsilon"] for p in eval_pts],
         }
 
-    eval_points   = []
+    eval_points = []
     iteration_log = []
-    _rng  = np.random.default_rng(seed=77)
+    _rng = np.random.default_rng(seed=77)
     _seed = 500
 
     with mo.status.spinner(f"Adaptive loop — budget={_budget} eval points ..."):
         # Iteration 0: deterministic model
         _pf = model1.pathfinder(
-            data=base_stan_data, draws=_points_per_iter,
-            seed=_seed, show_console=False,
+            data=base_stan_data,
+            draws=_points_per_iter,
+            seed=_seed,
+            show_console=False,
         )
         _seed += 1
-        _ne_draws = _pf.stan_variable("Ne_values")[:_points_per_iter]   # (draws, n_epochs)
-        _t_draws  = _pf.stan_variable("t_boundaries")[:_points_per_iter]  # (draws, n_epochs-1)
-        iteration_log.append({
-            "iter": 0, "model": "det",
-            "ne_draws": _ne_draws.tolist(), "t_draws": _t_draws.tolist(),
-        })
+        _ne_draws = _pf.stan_variable("Ne_values")[
+            :_points_per_iter
+        ]  # (draws, n_epochs)
+        _t_draws = _pf.stan_variable("t_boundaries")[
+            :_points_per_iter
+        ]  # (draws, n_epochs-1)
+        iteration_log.append(
+            {
+                "iter": 0,
+                "model": "det",
+                "ne_draws": _ne_draws.tolist(),
+                "t_draws": _t_draws.tolist(),
+            }
+        )
         for _ne, _t in zip(_ne_draws, _t_draws):
             eval_points.append(_mc_eval(_ne, _t, _seed, _rng))
             _seed += 1
@@ -260,15 +288,21 @@ def _(
         while len(eval_points) < _budget:
             _pf = model_gp.pathfinder(
                 data=_make_gp_data(eval_points),
-                draws=_points_per_iter, seed=_seed, show_console=False,
+                draws=_points_per_iter,
+                seed=_seed,
+                show_console=False,
             )
             _seed += 1
             _ne_draws = _pf.stan_variable("Ne_values")[:_points_per_iter]
-            _t_draws  = _pf.stan_variable("t_boundaries")[:_points_per_iter]
-            iteration_log.append({
-                "iter": _it, "model": "gp",
-                "ne_draws": _ne_draws.tolist(), "t_draws": _t_draws.tolist(),
-            })
+            _t_draws = _pf.stan_variable("t_boundaries")[:_points_per_iter]
+            iteration_log.append(
+                {
+                    "iter": _it,
+                    "model": "gp",
+                    "ne_draws": _ne_draws.tolist(),
+                    "t_draws": _t_draws.tolist(),
+                }
+            )
             for _ne, _t in zip(_ne_draws, _t_draws):
                 if len(eval_points) < _budget:
                     eval_points.append(_mc_eval(_ne, _t, _seed, _rng))
@@ -293,22 +327,23 @@ def _(base_stan_data, eval_points, last_pf, mo, model_gp, n_epochs, np):
             for p in eval_points
         ],
         "eval_loglik_det": [p["loglik_det"] for p in eval_points],
-        "eval_bc_loglik":  [p["bc_loglik"]  for p in eval_points],
-        "eval_epsilon":    [p["epsilon"]     for p in eval_points],
+        "eval_bc_loglik": [p["bc_loglik"] for p in eval_points],
+        "eval_epsilon": [p["epsilon"] for p in eval_points],
     }
 
     # Build one init dict per chain from the last Pathfinder draw pool.
-    _D    = 2 * n_epochs - 1
+    _D = 2 * n_epochs - 1
     _n_pf = last_pf.stan_variable("log_Ne_values").shape[0]
-    _idx  = np.random.default_rng(seed=0).choice(_n_pf, size=4, replace=_n_pf < 4)
+    _idx = np.random.default_rng(seed=0).choice(_n_pf, size=4, replace=_n_pf < 4)
     _inits = [
         {
-            "log_Ne_values":    last_pf.stan_variable("log_Ne_values")[i].tolist(),
+            "log_Ne_values": last_pf.stan_variable("log_Ne_values")[i].tolist(),
             "log_t_boundaries": last_pf.stan_variable("log_t_boundaries")[i].tolist(),
-            "gp_rho":           last_pf.stan_variable("gp_rho")[i].tolist(),
-            "gp_alpha":         float(last_pf.stan_variable("gp_alpha")[i]),
-            "beta":             [last_pf.stan_variable("beta")[i, d, :].tolist()
-                                 for d in range(_D)],
+            "gp_rho": last_pf.stan_variable("gp_rho")[i].tolist(),
+            "gp_alpha": float(last_pf.stan_variable("gp_alpha")[i]),
+            "beta": [
+                last_pf.stan_variable("beta")[i, d, :].tolist() for d in range(_D)
+            ],
         }
         for i in _idx
     ]
@@ -327,8 +362,8 @@ def _(base_stan_data, eval_points, last_pf, mo, model_gp, n_epochs, np):
             show_console=False,
         )
 
-    _ne_vals = fit_nuts.stan_variable("Ne_values")   # (draws, n_epochs)
-    _t_vals  = fit_nuts.stan_variable("t_boundaries")  # (draws, n_epochs-1)
+    _ne_vals = fit_nuts.stan_variable("Ne_values")  # (draws, n_epochs)
+    _t_vals = fit_nuts.stan_variable("t_boundaries")  # (draws, n_epochs-1)
     mo.md(f"""
     NUTS complete.
 
@@ -349,7 +384,9 @@ def _(az, fit_nuts, plt):
         var_names=["Ne_values", "t_boundaries", "gp_alpha", "gp_bias"],
         combined=False,
     )
-    plt.gcf().suptitle("NUTS trace — GP surrogate (piecewise constant, 2 epochs)", y=1.01, fontsize=12)
+    plt.gcf().suptitle(
+        "NUTS trace — GP surrogate (piecewise constant, 2 epochs)", y=1.01, fontsize=12
+    )
     plt.tight_layout()
     plt.gcf()
     return (idata,)
@@ -385,23 +422,32 @@ def _(
 
     _colors = {"det": "steelblue", "gp": "darkorange"}
     _param_axes = [
-        (ax_ne1, 0, "ne",  Ne_values_true[0],    "Ne_1"),
-        (ax_ne2, 1, "ne",  Ne_values_true[1],    "Ne_2"),
-        (ax_t1,  0, "t",   t_boundaries_true[0], "t_1"),
+        (ax_ne1, 0, "ne", Ne_values_true[0], "Ne_1"),
+        (ax_ne2, 1, "ne", Ne_values_true[1], "Ne_2"),
+        (ax_t1, 0, "t", t_boundaries_true[0], "t_1"),
     ]
 
     for _ax, _idx, _kind, _truth, _label in _param_axes:
         _seen = set()
         for _log in iteration_log:
-            _c   = _colors[_log["model"]]
+            _c = _colors[_log["model"]]
             _lbl = _log["model"] if _log["model"] not in _seen else ""
             _seen.add(_log["model"])
-            _vals = [row[_idx] for row in (_log["ne_draws"] if _kind == "ne" else _log["t_draws"])]
+            _vals = [
+                row[_idx]
+                for row in (_log["ne_draws"] if _kind == "ne" else _log["t_draws"])
+            ]
             _ax.scatter(
-                [_log["iter"]] * len(_vals), _vals,
-                color=_c, alpha=0.75, s=50, label=_lbl,
+                [_log["iter"]] * len(_vals),
+                _vals,
+                color=_c,
+                alpha=0.75,
+                s=50,
+                label=_lbl,
             )
-        _ax.axhline(_truth, color="red", lw=1.5, linestyle="--", label=f"True={_truth:.4g}")
+        _ax.axhline(
+            _truth, color="red", lw=1.5, linestyle="--", label=f"True={_truth:.4g}"
+        )
         _ax.set_xlabel("Iteration")
         _ax.set_ylabel(_label)
         _ax.set_title(f"Pathfinder draws — {_label}")
@@ -409,29 +455,46 @@ def _(
 
     # GP bias landscape vs Ne_1
     fig_bias, ax_bias = plt.subplots(figsize=(7, 4))
-    _eval_ne1   = np.array([p["ne_values"][0]                      for p in eval_points])
-    _eval_delta = np.array([p["bc_loglik"] - p["loglik_det"]       for p in eval_points])
-    _eval_eps   = np.array([p["epsilon"]                           for p in eval_points])
-    _ne1_samp   = fit_nuts.stan_variable("Ne_values")[:, 0]
-    _bias_samp  = fit_nuts.stan_variable("gp_bias")
+    _eval_ne1 = np.array([p["ne_values"][0] for p in eval_points])
+    _eval_delta = np.array([p["bc_loglik"] - p["loglik_det"] for p in eval_points])
+    _eval_eps = np.array([p["epsilon"] for p in eval_points])
+    _ne1_samp = fit_nuts.stan_variable("Ne_values")[:, 0]
+    _bias_samp = fit_nuts.stan_variable("gp_bias")
     ax_bias.errorbar(
-        _eval_ne1, _eval_delta, yerr=_eval_eps,
-        fmt="o", color="gray", alpha=0.7, capsize=3, label="Observed δ ± ε",
+        _eval_ne1,
+        _eval_delta,
+        yerr=_eval_eps,
+        fmt="o",
+        color="gray",
+        alpha=0.7,
+        capsize=3,
+        label="Observed δ ± ε",
     )
     ax_bias.scatter(
-        _ne1_samp, _bias_samp, alpha=0.03, s=10,
-        color="purple", label="GP bias at posterior Ne_1",
+        _ne1_samp,
+        _bias_samp,
+        alpha=0.03,
+        s=10,
+        color="purple",
+        label="GP bias at posterior Ne_1",
     )
     ax_bias.axhline(0, color="k", lw=0.8, linestyle=":")
-    ax_bias.axvline(Ne_values_true[0], color="red", lw=1.5, linestyle="--",
-                    label=f"True Ne_1={Ne_values_true[0]:.0f}")
+    ax_bias.axvline(
+        Ne_values_true[0],
+        color="red",
+        lw=1.5,
+        linestyle="--",
+        label=f"True Ne_1={Ne_values_true[0]:.0f}",
+    )
     ax_bias.set_xscale("log")
     ax_bias.set_xlabel("Ne_1 (log scale)")
     ax_bias.set_ylabel("Bias  =  bc_loglik − loglik_det")
     ax_bias.set_title("GP bias landscape (Ne_1 dimension)")
     ax_bias.legend(fontsize=8)
 
-    fig_diag.suptitle("Adaptive GP surrogate diagnostics (piecewise constant, 2 epochs)", fontsize=12)
+    fig_diag.suptitle(
+        "Adaptive GP surrogate diagnostics (piecewise constant, 2 epochs)", fontsize=12
+    )
     fig_diag.tight_layout()
     fig_diag
     return

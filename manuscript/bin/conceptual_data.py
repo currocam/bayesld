@@ -1,8 +1,8 @@
-#!/usr/bin/env -S uv run --script
+#!/usr/bin/env -S uv run --script --isolated
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "bayesld @ git+https://github.com/currocam/bayesld.git@95f5051",
+#     "bayesld @ git+https://github.com/currocam/bayesld.git@caca14b",
 #     "msprime==1.4.0",
 #     "numpy==2.2.6",
 #     "joblib==1.5.3",
