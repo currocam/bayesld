@@ -5,11 +5,15 @@ Uses joblib for parallelisation across replicates and msprime for
 coalescent simulation (default model: SMC' via SMCK(k=1)).
 """
 
+import os
+
 import msprime
 import numpy as np
 from joblib import Parallel, delayed
 
 _DEFAULT_MODEL = msprime.SMCK(k=1)
+MAX_REPLICATES = 10_000
+_SENTINEL = object()
 
 
 def _run_replicate(
@@ -52,6 +56,25 @@ def _run_replicate(
     return stats["mean_genetic_diversity"], stats["mean_linkage_disequilibrium"]
 
 
+def _max_relative_se(values):
+    """Max relative standard error of the mean across all components.
+
+    Parameters
+    ----------
+    values : ndarray, shape (n, ...) with n >= 2
+
+    Returns
+    -------
+    float — max |SE / mean| across all elements (0 where mean is zero)
+    """
+    n = values.shape[0]
+    mean = values.mean(axis=0)
+    se = values.std(axis=0, ddof=1) / np.sqrt(n)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rse = np.abs(se / mean)
+    return float(np.nanmax(np.where(np.isfinite(rse), rse, 0.0)))
+
+
 def _parallel_mc(
     build_demography,
     params,
@@ -66,40 +89,79 @@ def _parallel_mc(
     random_seed,
     num_replicates,
     num_workers,
+    rtol,
 ):
-    """Run `num_replicates` MC simulations in parallel via joblib.
+    """Run MC simulations in parallel via joblib.
 
-    Parameters
-    ----------
-    build_demography : callable
-        (*float_params) -> msprime.Demography
-    params : tuple of float
-        Demographic parameters forwarded to build_demography.
-    num_workers : int
-        Number of parallel workers.  -1 uses all available cores (joblib convention).
+    Fixed mode (rtol is None): run exactly num_replicates simulations.
+    Adaptive mode (rtol is set): run batches of num_workers until the
+    max relative SE of the mean drops below rtol for both pi and LD.
 
     Returns
     -------
-    pi_replicates : ndarray (num_replicates,)
-    ld_replicates : ndarray (num_replicates, num_bins)
+    pi_replicates : ndarray (n,)
+    ld_replicates : ndarray (n, num_bins)
     """
     demography = build_demography(*params)
     dem_demes = demography.to_demes()
-
     rng = np.random.default_rng(random_seed)
-    seeds = rng.integers(1, 2**32 - 1, size=num_replicates)
 
-    results = Parallel(n_jobs=num_workers)(
-        delayed(_run_replicate)(
-            int(s), sample_size, dem_demes, recombination_rate,
-            sequence_length, mutation_rate, left_bins, right_bins, ploidy, model,
+    def run_batch(seeds):
+        results = Parallel(n_jobs=num_workers)(
+            delayed(_run_replicate)(
+                int(s), sample_size, dem_demes, recombination_rate,
+                sequence_length, mutation_rate, left_bins, right_bins,
+                ploidy, model,
+            )
+            for s in seeds
         )
-        for s in seeds
+        return (
+            [r[0] for r in results],
+            [r[1] for r in results],
+        )
+
+    if rtol is None:
+        seeds = rng.integers(1, 2**32 - 1, size=num_replicates)
+        pi_vals, ld_vals = run_batch(seeds)
+        return np.asarray(pi_vals), np.asarray(ld_vals)
+
+    # Adaptive mode: run batches until convergence
+    batch_size = os.cpu_count() or 1 if num_workers == -1 else max(num_workers, 1)
+    pi_all, ld_all = [], []
+
+    while len(pi_all) < MAX_REPLICATES:
+        seeds = rng.integers(1, 2**32 - 1, size=batch_size)
+        pi_batch, ld_batch = run_batch(seeds)
+        pi_all.extend(pi_batch)
+        ld_all.extend(ld_batch)
+
+        if len(pi_all) < 2:
+            continue
+
+        pi_arr = np.asarray(pi_all)
+        ld_arr = np.asarray(ld_all)
+        rse = max(
+            _max_relative_se(pi_arr[:, np.newaxis]),
+            _max_relative_se(ld_arr),
+        )
+        if rse < rtol:
+            return pi_arr, ld_arr
+
+    raise RuntimeError(
+        f"Adaptive MC did not converge after {MAX_REPLICATES} replicates "
+        f"(rtol={rtol}, achieved={rse:.4g})"
     )
 
-    pi = np.array([r[0] for r in results], dtype=np.float64)
-    ld = np.array([r[1] for r in results], dtype=np.float64)
-    return pi, ld
+
+def _validate_stopping(num_replicates, rtol):
+    """Resolve and validate the stopping criterion."""
+    if rtol is not None and num_replicates is not _SENTINEL:
+        raise ValueError("num_replicates and rtol are mutually exclusive")
+    if rtol is None and num_replicates is _SENTINEL:
+        num_replicates = 1
+    if num_replicates is _SENTINEL:
+        num_replicates = None
+    return num_replicates, rtol
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -114,10 +176,11 @@ def expected_constant(
     sequence_length,
     sample_size,
     random_seed,
-    num_replicates=1,
+    num_replicates=_SENTINEL,
     ploidy=2,
     model=_DEFAULT_MODEL,
     num_workers=-1,
+    rtol=None,
 ):
     """
     Expected genetic diversity and LD under constant Ne via Monte Carlo.
@@ -129,16 +192,18 @@ def expected_constant(
     mutation_rate, recombination_rate, sequence_length : float
     sample_size : int  — diploid individuals
     random_seed : int
-    num_replicates : int
+    num_replicates : int  — fixed replicate count (mutually exclusive with rtol)
     ploidy : int
     model : msprime ancestry model  — default is SMCK(k=1)
     num_workers : int  — joblib parallel workers (-1 = all cores)
+    rtol : float or None  — adaptive: simulate until relative SE < rtol
 
     Returns
     -------
-    pi_replicates : ndarray (num_replicates,)
-    ld_replicates : ndarray (num_replicates, num_bins)
+    pi_replicates : ndarray (n,)
+    ld_replicates : ndarray (n, num_bins)
     """
+    num_replicates, rtol = _validate_stopping(num_replicates, rtol)
     left_bins = np.asarray(left_bins)
     right_bins = np.asarray(right_bins)
 
@@ -151,7 +216,7 @@ def expected_constant(
         build_demography, (Ne,),
         left_bins, right_bins, mutation_rate, recombination_rate,
         sequence_length, sample_size, ploidy, model,
-        random_seed, num_replicates, num_workers,
+        random_seed, num_replicates, num_workers, rtol,
     )
 
 
@@ -167,10 +232,11 @@ def expected_piecewise_exponential(
     sequence_length,
     sample_size,
     random_seed,
-    num_replicates=1,
+    num_replicates=_SENTINEL,
     ploidy=2,
     model=_DEFAULT_MODEL,
     num_workers=-1,
+    rtol=None,
 ):
     """
     Expected genetic diversity and LD under a two-phase exponential demography via Monte Carlo.
@@ -187,16 +253,18 @@ def expected_piecewise_exponential(
     mutation_rate, recombination_rate, sequence_length : float
     sample_size : int
     random_seed : int
-    num_replicates : int
+    num_replicates : int  — fixed replicate count (mutually exclusive with rtol)
     ploidy : int
     model : msprime ancestry model  — default is SMCK(k=1)
     num_workers : int  — joblib parallel workers (-1 = all cores)
+    rtol : float or None  — adaptive: simulate until relative SE < rtol
 
     Returns
     -------
-    pi_replicates : ndarray (num_replicates,)
-    ld_replicates : ndarray (num_replicates, num_bins)
+    pi_replicates : ndarray (n,)
+    ld_replicates : ndarray (n, num_bins)
     """
+    num_replicates, rtol = _validate_stopping(num_replicates, rtol)
     left_bins = np.asarray(left_bins)
     right_bins = np.asarray(right_bins)
 
@@ -210,7 +278,7 @@ def expected_piecewise_exponential(
         build_demography, (Ne_c, Ne_a, t0, alpha),
         left_bins, right_bins, mutation_rate, recombination_rate,
         sequence_length, sample_size, ploidy, model,
-        random_seed, num_replicates, num_workers,
+        random_seed, num_replicates, num_workers, rtol,
     )
 
 
@@ -227,10 +295,11 @@ def expected_exponential_carrying_capacity(
     sequence_length,
     sample_size,
     random_seed,
-    num_replicates=1,
+    num_replicates=_SENTINEL,
     ploidy=2,
     model=_DEFAULT_MODEL,
     num_workers=-1,
+    rtol=None,
 ):
     """
     Expected genetic diversity and LD under an exponential carrying-capacity demography via MC.
@@ -250,16 +319,18 @@ def expected_exponential_carrying_capacity(
     mutation_rate, recombination_rate, sequence_length : float
     sample_size : int
     random_seed : int
-    num_replicates : int
+    num_replicates : int  — fixed replicate count (mutually exclusive with rtol)
     ploidy : int
     model : msprime ancestry model  — default is SMCK(k=1)
     num_workers : int  — joblib parallel workers (-1 = all cores)
+    rtol : float or None  — adaptive: simulate until relative SE < rtol
 
     Returns
     -------
-    pi_replicates : ndarray (num_replicates,)
-    ld_replicates : ndarray (num_replicates, num_bins)
+    pi_replicates : ndarray (n,)
+    ld_replicates : ndarray (n, num_bins)
     """
+    num_replicates, rtol = _validate_stopping(num_replicates, rtol)
     left_bins = np.asarray(left_bins)
     right_bins = np.asarray(right_bins)
 
@@ -274,7 +345,7 @@ def expected_exponential_carrying_capacity(
         build_demography, (Ne_c, Ne_a, t0, t1, alpha),
         left_bins, right_bins, mutation_rate, recombination_rate,
         sequence_length, sample_size, ploidy, model,
-        random_seed, num_replicates, num_workers,
+        random_seed, num_replicates, num_workers, rtol,
     )
 
 
@@ -288,10 +359,11 @@ def expected_piecewise_constant(
     sequence_length,
     sample_size,
     random_seed,
-    num_replicates=1,
+    num_replicates=_SENTINEL,
     ploidy=2,
     model=_DEFAULT_MODEL,
     num_workers=-1,
+    rtol=None,
 ):
     """
     Expected genetic diversity and LD under a piecewise-constant demography via Monte Carlo.
@@ -307,16 +379,18 @@ def expected_piecewise_constant(
     mutation_rate, recombination_rate, sequence_length : float
     sample_size : int
     random_seed : int
-    num_replicates : int
+    num_replicates : int  — fixed replicate count (mutually exclusive with rtol)
     ploidy : int
     model : msprime ancestry model  — default is SMCK(k=1)
     num_workers : int  — joblib parallel workers (-1 = all cores)
+    rtol : float or None  — adaptive: simulate until relative SE < rtol
 
     Returns
     -------
-    pi_replicates : ndarray (num_replicates,)
-    ld_replicates : ndarray (num_replicates, num_bins)
+    pi_replicates : ndarray (n,)
+    ld_replicates : ndarray (n, num_bins)
     """
+    num_replicates, rtol = _validate_stopping(num_replicates, rtol)
     Ne_values    = list(Ne_values)
     t_boundaries = list(t_boundaries)
     left_bins    = np.asarray(left_bins)
@@ -333,5 +407,5 @@ def expected_piecewise_constant(
         build_demography, (Ne_values, t_boundaries),
         left_bins, right_bins, mutation_rate, recombination_rate,
         sequence_length, sample_size, ploidy, model,
-        random_seed, num_replicates, num_workers,
+        random_seed, num_replicates, num_workers, rtol,
     )
