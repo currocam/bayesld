@@ -32,13 +32,19 @@ def _default_prior(diversity: np.ndarray, mutation_rate: float) -> str:
     return f"    log_Ne ~ normal({log_ne_mu:.4f}, 1.0);"
 
 
+_DEFAULT_TRANSFORMED_PARAMETERS = """\
+    real<lower=0> Ne = exp(log_Ne);"""
+
+
 def _generate_stan(
     prior: str = "    log_Ne ~ normal(3, 1.0);",
     parameters: str = "    real<offset=log_ne_offset> log_Ne;",
+    transformed_parameters: str = _DEFAULT_TRANSFORMED_PARAMETERS,
 ) -> str:
     """Assemble the complete Stan program for the constant-Ne model.
 
-    Two injection points: ``parameters`` block and ``prior`` block.
+    Three injection points: ``parameters``, ``transformed_parameters``
+    (injected at top of transformed parameters block), and ``prior``.
     GP bias-correction blocks are always included.
     """
     gp_fn = (_STAN_DIR / "functions" / "gpbasisfun_functions.stan").read_text()
@@ -114,7 +120,7 @@ parameters {{
 }}
 
 transformed parameters {{
-    real<lower=0> Ne = exp(log_Ne);
+{transformed_parameters}
 {debug_tp}
     vector[hsgp_m] spd_r = diagSPD_EQ(gp_alpha, gp_rho_r, L_r, hsgp_m);
     vector[n_bins] gp_bias_ld = PHI_r * (spd_r .* beta_r);
@@ -181,6 +187,9 @@ class ConstantDemography:
         Stan prior block.  ``None`` → data-driven default.
     parameters : str
         Stan parameters block content.
+    transformed_parameters : str
+        Extra declarations injected at the top of the transformed parameters
+        block (before model-specific derived quantities).
     """
 
     def __init__(
@@ -200,6 +209,7 @@ class ConstantDemography:
         gp_alpha_std: float = 0.005,
         prior: Optional[str] = None,
         parameters: str = "    real<offset=log_ne_offset> log_Ne;",
+        transformed_parameters: str = _DEFAULT_TRANSFORMED_PARAMETERS,
     ):
         self._diversity = np.asarray(diversity, dtype=float)
         self._ld = np.asarray(ld, dtype=float)
@@ -225,9 +235,12 @@ class ConstantDemography:
             else _default_prior(self._diversity, self._mutation_rate)
         )
         self._parameters = parameters
+        self._transformed_parameters = transformed_parameters
 
         self._tmpdir = pathlib.Path(tempfile.mkdtemp())
-        self._stan_code = _generate_stan(self._prior, self._parameters)
+        self._stan_code = _generate_stan(
+            self._prior, self._parameters, self._transformed_parameters
+        )
         self._model = self._compile(self._stan_code)
 
     # ──────────────────────────────────────────────────────────────────────
@@ -315,11 +328,13 @@ class ConstantDemography:
         self,
         prior: Optional[str] = None,
         parameters: Optional[str] = None,
+        transformed_parameters: Optional[str] = None,
         gp_alpha_std: Optional[float] = None,
     ) -> None:
-        """Update prior/parameters and/or gp_alpha_std.
+        """Update prior/parameters/transformed_parameters and/or gp_alpha_std.
 
-        Changing ``prior`` or ``parameters`` triggers recompilation.
+        Changing ``prior``, ``parameters``, or ``transformed_parameters``
+        triggers recompilation.
         Changing only ``gp_alpha_std`` is data-only (no recompilation).
         ``None`` means keep current value.
         """
@@ -330,11 +345,19 @@ class ConstantDemography:
         if parameters is not None and parameters != self._parameters:
             self._parameters = parameters
             needs_recompile = True
+        if (
+            transformed_parameters is not None
+            and transformed_parameters != self._transformed_parameters
+        ):
+            self._transformed_parameters = transformed_parameters
+            needs_recompile = True
         if gp_alpha_std is not None:
             self._gp_alpha_std = float(gp_alpha_std)
 
         if needs_recompile:
-            self._stan_code = _generate_stan(self._prior, self._parameters)
+            self._stan_code = _generate_stan(
+                self._prior, self._parameters, self._transformed_parameters
+            )
             self._model = self._compile(self._stan_code)
 
     # ──────────────────────────────────────────────────────────────────────

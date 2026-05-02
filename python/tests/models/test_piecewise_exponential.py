@@ -1,10 +1,10 @@
 """
-Tests for bayesld.models.ConstantDemography.
+Tests for bayesld.models.PiecewiseExponentialDemography.
 
-Strategy: draw Ne from the prior log(Ne) ~ Normal(log(500), 1), compute
-noiseless expected diversity and LD via the deterministic module, add a small
-relative GP-like bias plus Gaussian noise, and verify the Stan model compiles,
-runs, and returns expected types.
+Strategy: draw Ne_c, Ne_a, t0, log_fold_change from priors, compute alpha,
+compute noiseless expected diversity and LD via the deterministic module,
+add small relative noise, and verify the Stan model compiles, runs, and
+returns expected types.
 """
 
 import cmdstanpy
@@ -14,7 +14,7 @@ import pytest
 
 import bayesld
 from bayesld import deterministic
-from bayesld.models import ConstantDemography
+from bayesld.models import PiecewiseExponentialDemography
 
 jax.config.update("jax_enable_x64", True)
 
@@ -32,15 +32,25 @@ LOG_NE_SIGMA = 1.0
 
 def _simulate(seed=42):
     rng = np.random.default_rng(seed)
-    ne = float(np.exp(rng.normal(LOG_NE_MU, LOG_NE_SIGMA)))
+    ne_a = float(np.exp(rng.normal(LOG_NE_MU, LOG_NE_SIGMA)))
+    log_fold_change = float(rng.normal(0, 1.0))
+    ne_c = ne_a * np.exp(log_fold_change)
+    t0 = float(np.exp(rng.normal(np.log(100), 0.5)))
+    alpha = log_fold_change / t0
 
-    pi_exp, ld_exp = deterministic.expected_constant(
-        ne, LEFT_BINS, RIGHT_BINS, MUTATION_RATE, sample_size=NUM_SAMPLES
+    pi_exp, ld_exp = deterministic.expected_piecewise_exponential(
+        ne_c,
+        ne_a,
+        t0,
+        alpha,
+        LEFT_BINS,
+        RIGHT_BINS,
+        MUTATION_RATE,
+        sample_size=NUM_SAMPLES,
     )
     pi_exp = float(pi_exp)
     ld_exp = np.asarray(ld_exp)
 
-    # Simulate per-bin relative bias (GP-like)
     bias = rng.normal(0, 0.005, size=len(LEFT_BINS))
     ld_true = ld_exp * (1 + bias)
 
@@ -54,11 +64,11 @@ def _simulate(seed=42):
     assert np.all(np.isfinite(ld)), "ld contains non-finite values"
     assert np.all(np.std(ld, axis=0) > 0), "ld has zero-variance bins"
     assert np.std(diversity) > 0, "diversity has zero variance"
-    return ne, diversity, ld
+    return ne_c, ne_a, t0, alpha, log_fold_change, diversity, ld
 
 
 def _make_model(**kwargs):
-    _, diversity, ld = _simulate()
+    _, _, _, _, _, diversity, ld = _simulate()
     defaults = dict(
         diversity=diversity,
         ld=ld,
@@ -69,7 +79,7 @@ def _make_model(**kwargs):
         right_bins=RIGHT_BINS,
     )
     defaults.update(kwargs)
-    return ConstantDemography(**defaults)
+    return PiecewiseExponentialDemography(**defaults)
 
 
 # ── Non-slow tests ──────────────────────────────────────────────────────
@@ -101,6 +111,9 @@ def test_stan_data_keys():
         "sample_size",
         "pi_array",
         "ld_mat",
+        "n_quad",
+        "gl_nodes",
+        "gl_weights",
         "n_synthetic",
         "eval_rel_bias",
         "eval_eps_rel",
@@ -114,9 +127,9 @@ def test_stan_data_keys():
 def test_update_data():
     model = _make_model()
     old_model_obj = model.model
-    _, new_div, new_ld = _simulate(seed=99)
+    _, _, _, _, _, new_div, new_ld = _simulate(seed=99)
     model.update_data(diversity=new_div, ld=new_ld)
-    assert model.model is old_model_obj  # no recompilation
+    assert model.model is old_model_obj
     data = model.stan_data()
     np.testing.assert_array_equal(data["pi_array"], new_div)
 
@@ -124,15 +137,17 @@ def test_update_data():
 def test_update_prior_recompiles():
     model = _make_model()
     old_model_obj = model.model
-    model.update_prior(prior="    log_Ne ~ normal(5, 2.0);")
-    assert model.model is not old_model_obj  # recompiled
+    model.update_prior(
+        prior="    log_Ne_a ~ normal(5, 2.0);\n    log_t0 ~ normal(4, 1);\n    log_fold_change ~ normal(0, 1);"
+    )
+    assert model.model is not old_model_obj
 
 
 def test_update_prior_gp_alpha_std_no_recompile():
     model = _make_model()
     old_model_obj = model.model
     model.update_prior(gp_alpha_std=0.01)
-    assert model.model is old_model_obj  # no recompilation
+    assert model.model is old_model_obj
     assert model.stan_data()["gp_alpha_std"] == 0.01
 
 
@@ -156,27 +171,35 @@ def test_add_synthetic_points_validation():
 
 
 def test_generate_stan_default():
-    from bayesld.models.constant import _generate_stan
+    from bayesld.models.piecewise_exponential import _generate_stan
 
     code = _generate_stan()
-    assert "log_Ne ~ normal(3, 1.0);" in code
-    assert "real<offset=log_ne_offset> log_Ne;" in code
-    assert "real<lower=0> Ne = exp(log_Ne);" in code
+    assert "log_Ne_a" in code
+    assert "log_t0" in code
+    assert "log_fold_change" in code
+    assert "log_Ne_c = log_Ne_a + log_fold_change" in code
     assert "n_synthetic" in code
     assert "corrected_ld" in code
 
 
 def test_generate_stan_custom():
-    from bayesld.models.constant import _generate_stan
+    from bayesld.models.piecewise_exponential import _generate_stan
 
-    code = _generate_stan(
-        prior="    log_Ne ~ normal(10, 0.5);",
-        parameters="    real log_Ne;",
-        transformed_parameters="    real<lower=0> Ne = exp(log_Ne);",
+    custom_tp = (
+        "    real<lower=0> Ne_c = exp(log_Ne_c);\n"
+        "    real<lower=0> Ne_a = exp(log_Ne_a);\n"
+        "    real<lower=0> t0   = exp(log_t0);\n"
+        "    real alpha = log_fold_change / t0;"
     )
-    assert "log_Ne ~ normal(10, 0.5);" in code
-    assert "real log_Ne;" in code
-    assert "real<lower=0> Ne = exp(log_Ne);" in code
+    code = _generate_stan(
+        prior="    log_Ne_a ~ normal(10, 0.5);\n    log_t0 ~ normal(4, 0.1);\n    log_fold_change ~ normal(0, 0.5);",
+        parameters="    real<offset=log_ne_offset> log_Ne_c;\n    real<offset=log_ne_offset> log_Ne_a;\n    real log_t0;\n    real log_fold_change;",
+        transformed_parameters=custom_tp,
+    )
+    assert "log_Ne_a ~ normal(10, 0.5);" in code
+    assert "real<offset=log_ne_offset> log_Ne_c;" in code
+    # Should NOT have the default derivation
+    assert "log_Ne_c = log_Ne_a + log_fold_change" not in code
 
 
 # ── Slow inference tests ────────────────────────────────────────────────
@@ -187,14 +210,16 @@ def test_sample_default_prior():
     model = _make_model()
     idata = model.sample(chains=2, iter_warmup=10, iter_sampling=10)
     assert "posterior" in idata.children
-    assert "Ne" in idata["posterior"].ds
+    assert "Ne_c" in idata["posterior"].ds
 
 
 @pytest.mark.slow
 def test_sample_true_prior():
-    ne_true, diversity, ld = _simulate()
-    log_ne_true = np.log(ne_true)
-    model = ConstantDemography(
+    ne_c, ne_a, t0, alpha, lfc, diversity, ld = _simulate()
+    log_ne_c = np.log(ne_c)
+    log_ne_a = np.log(ne_a)
+    log_t0 = np.log(t0)
+    model = PiecewiseExponentialDemography(
         diversity=diversity,
         ld=ld,
         mutation_rate=MUTATION_RATE,
@@ -202,7 +227,24 @@ def test_sample_true_prior():
         num_samples=NUM_SAMPLES,
         left_bins=LEFT_BINS,
         right_bins=RIGHT_BINS,
-        prior=f"    log_Ne ~ normal({log_ne_true:.4f}, 0.1);",
+        prior=(
+            f"    log_Ne_c ~ normal({log_ne_c:.4f}, 0.1);\n"
+            f"    log_Ne_a ~ normal({log_ne_a:.4f}, 0.1);\n"
+            f"    log_t0 ~ normal({log_t0:.4f}, 0.1);\n"
+            f"    log_fold_change ~ normal(0, 1.0);"
+        ),
+        parameters=(
+            "    real<offset=log_ne_offset> log_Ne_c;\n"
+            "    real<offset=log_ne_offset> log_Ne_a;\n"
+            "    real log_t0;\n"
+            "    real log_fold_change;"
+        ),
+        transformed_parameters=(
+            "    real<lower=0> Ne_c = exp(log_Ne_c);\n"
+            "    real<lower=0> Ne_a = exp(log_Ne_a);\n"
+            "    real<lower=0> t0   = exp(log_t0);\n"
+            "    real alpha = log_fold_change / t0;"
+        ),
     )
     idata = model.sample(chains=2, iter_warmup=10, iter_sampling=10)
-    assert "Ne" in idata["posterior"].ds
+    assert "Ne_c" in idata["posterior"].ds
