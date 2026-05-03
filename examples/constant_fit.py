@@ -106,6 +106,7 @@ def _(
     left_bins,
     mo,
     mutation_rate,
+    np,
     pi_data,
     recombination_rate,
     right_bins,
@@ -113,6 +114,7 @@ def _(
     window_length,
 ):
     mo.stop(pi_data is None, mo.callout(mo.md("Simulate data first."), kind="warn"))
+    # Generic broad prior covering slider range (Ne: 10–20,000)
     model = ConstantDemography(
         diversity=pi_data,
         ld=ld_data,
@@ -123,6 +125,7 @@ def _(
         right_bins=right_bins,
         sequence_length=window_length,
         num_workers=8,
+        prior=f"    log_Ne ~ normal({np.log(1000.0):.4f}, 2.0);",
     )
     mo.md("Model compiled.")
     return (model,)
@@ -155,6 +158,57 @@ def _(mo, model):
     n_pts = len(model.synthetic_points)
     mo.md(f"Active learning complete: **{n_pts}** synthetic points accumulated.")
     return (n_pts,)
+
+
+@app.cell
+def _(left_bins, mo, model, n_pts, np, plt, right_bins):
+    mo.stop(n_pts is None or n_pts == 0)
+
+    points = model.synthetic_points
+    _bin_mid = (np.array(left_bins) + np.array(right_bins)) / 2
+    _n_bins = len(_bin_mid)
+
+    # Cumulative mean and SE of relative bias after each point
+    all_bias = np.array([p["rel_bias"] for p in points])  # (n_pts, n_bins)
+    cum_mean = np.cumsum(all_bias, axis=0) / np.arange(1, len(all_bias) + 1)[:, None]
+    cum_std = np.zeros_like(cum_mean)
+    for k in range(2, len(all_bias) + 1):
+        cum_std[k - 1] = all_bias[:k].std(axis=0, ddof=1) / np.sqrt(k)
+
+    _fig, (_ax1, _ax2) = plt.subplots(1, 2, figsize=(12, 4))
+
+    # Left: one line per bin showing cumulative mean bias across points
+    for j in range(_n_bins):
+        _ax1.plot(
+            np.arange(1, len(all_bias) + 1),
+            100 * cum_mean[:, j],
+            alpha=0.6,
+            lw=1.2,
+        )
+    _ax1.axhline(0, color="gray", lw=0.8, ls="--")
+    _ax1.set_xlabel("Cumulative synthetic points")
+    _ax1.set_ylabel("Cumulative mean bias (%)")
+    _ax1.set_title("Bias convergence per bin")
+
+    # Right: final mean bias +/- SE across bins
+    final_mean = cum_mean[-1]
+    final_se = cum_std[-1]
+    _ax2.errorbar(
+        _bin_mid,
+        100 * final_mean,
+        yerr=100 * final_se,
+        fmt="o-",
+        ms=4,
+        lw=1.2,
+        color="purple",
+    )
+    _ax2.axhline(0, color="gray", lw=0.8, ls="--")
+    _ax2.set_xlabel("Recombination distance (Morgans)")
+    _ax2.set_ylabel("Mean bias +/- SE (%)")
+    _ax2.set_title(f"Final bias estimate ({len(all_bias)} points)")
+    plt.tight_layout()
+    _fig
+    return
 
 
 @app.cell

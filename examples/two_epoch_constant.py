@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.1"
+__generated_with = "0.23.3"
 app = marimo.App(width="medium")
 
 
@@ -8,16 +8,12 @@ app = marimo.App(width="medium")
 def _():
     import marimo as mo
     import numpy as np
-    import arviz_base as az
     import matplotlib.pyplot as plt
     from bayesld import linear_bins
-    from bayesld import montecarlo as mc2
-    import jax
+    from bayesld import montecarlo as mc
+    from bayesld.models import TwoEpochDemography
 
-    jax.config.update("jax_enable_x64", True)
-    from bayesld.models import PiecewiseConstantDemography
-
-    return PiecewiseConstantDemography, az, linear_bins, mc2, mo, np, plt
+    return TwoEpochDemography, linear_bins, mc, mo, np, plt
 
 
 @app.cell
@@ -42,36 +38,26 @@ def _(mo):
         50_000,
         value=2_000,
         step=100,
-        label="Ne₁ — recent epoch (truth)",
+        label="Ne recent epoch (truth)",
     )
     ne2_slider = mo.ui.slider(
         100,
         50_000,
         value=10_000,
         step=100,
-        label="Ne₂ — ancestral epoch (truth)",
+        label="Ne ancestral epoch (truth)",
     )
     t_boundary_slider = mo.ui.slider(
         1,
-        100,
-        value=50,
-        step=1,
-        label="t_boundary — change-point (generations ago)",
-    )
-    sample_size_slider = mo.ui.slider(
-        10,
-        200,
-        value=50,
-        step=10,
-        label="Sample size (diploid individuals)",
-    )
-    num_windows_slider = mo.ui.slider(
-        10,
         500,
         value=50,
-        step=10,
-        label="Windows",
+        step=1,
+        label="t boundary (generations ago)",
     )
+    sample_size_slider = mo.ui.slider(
+        10, 200, value=50, step=10, label="Sample size (diploid)"
+    )
+    num_windows_slider = mo.ui.slider(10, 500, value=50, step=10, label="Windows")
     mo.vstack(
         [
             mo.md("## Simulation parameters"),
@@ -112,7 +98,7 @@ def _(
     Ne1_truth,
     Ne2_truth,
     left_bins,
-    mc2,
+    mc,
     mo,
     mutation_rate,
     np,
@@ -124,10 +110,10 @@ def _(
     window_length,
 ):
     with mo.status.spinner(
-        f"Simulating {num_windows} windows · "
-        f"Ne=({Ne1_truth:,}, {Ne2_truth:,}) · t={t_boundary_truth:,}…"
+        f"Simulating {num_windows} windows at "
+        f"Ne=({Ne1_truth:,}, {Ne2_truth:,}), t={t_boundary_truth:,}..."
     ):
-        _pi, _ld = mc2.expected_piecewise_constant(
+        _pi, _ld = mc.expected_piecewise_constant(
             np.array([float(Ne1_truth), float(Ne2_truth)]),
             np.array([float(t_boundary_truth)]),
             left_bins,
@@ -139,14 +125,16 @@ def _(
             random_seed=42,
             num_replicates=num_windows,
             ploidy=2,
+            num_workers=8,
+            model="hudson",
         )
     pi_data = np.array(_pi)
     ld_data = np.array(_ld)
     mo.callout(
         mo.md(
-            f"Simulated **{len(pi_data)}** windows · "
-            f"Ne=({Ne1_truth:,}, {Ne2_truth:,}) · "
-            f"t={t_boundary_truth:,} gen · n={sample_size} · "
+            f"Simulated **{len(pi_data)}** windows - "
+            f"Ne=({Ne1_truth:,}, {Ne2_truth:,}) - "
+            f"t={t_boundary_truth:,} gen - n={sample_size} - "
             f"L={window_length / 1e6:.0f} Mb"
         ),
         kind="success",
@@ -156,22 +144,21 @@ def _(
 
 @app.cell
 def _(
-    PiecewiseConstantDemography,
+    TwoEpochDemography,
     ld_data,
     left_bins,
     mo,
     mutation_rate,
+    np,
     pi_data,
     recombination_rate,
     right_bins,
     sample_size,
     window_length,
 ):
-    mo.stop(
-        pi_data is None,
-        mo.callout(mo.md("Simulate data first."), kind="warn"),
-    )
-    model = PiecewiseConstantDemography(
+    mo.stop(pi_data is None, mo.callout(mo.md("Simulate data first."), kind="warn"))
+    # Generic broad priors covering slider ranges (Ne: 100–50,000; t: 1–500)
+    model = TwoEpochDemography(
         diversity=pi_data,
         ld=ld_data,
         mutation_rate=mutation_rate,
@@ -179,284 +166,236 @@ def _(
         num_samples=sample_size,
         left_bins=left_bins,
         right_bins=right_bins,
-        n_epochs=2,
         sequence_length=window_length,
-        # hsgp_m=5,
+        num_workers=8,
+        prior=(
+            f"    log_Ne_a ~ normal({np.log(5000.0):.4f}, 1.5);\n"
+            f"    log_t0   ~ normal({np.log(50.0):.4f}, 1.5);\n"
+            f"    log_fold_change ~ normal(0, 1.5);"
+        ),
     )
-    mo.md(
-        "✓ Two-epoch model compiled — approximate and GP-surrogate Stan programs ready."
-    )
+    mo.md("Model compiled.")
     return (model,)
-
-
-@app.cell
-def _(Ne1_truth, Ne2_truth, mo, model, np):
-    mo.stop(model is None)
-    with mo.status.spinner("Optimising…"):
-        opt_result = model.optimize(
-            show_console=False,
-            seed=1,
-            inits={
-                "log_Ne_values": np.log([float(Ne1_truth), float(Ne2_truth)]),
-                "log_t_boundaries": np.log([500.0]),
-            },
-        )
-    _ne1, _ne2 = opt_result["Ne_values"]
-    _t_map = opt_result["t_boundaries"][0]
-    _gp_lines = (
-        [
-            mo.md(
-                f"GP bias LD — mean={opt_result['gp_bias_ld'].mean():.4f}  "
-                f"min={opt_result['gp_bias_ld'].min():.4f}  "
-                f"max={opt_result['gp_bias_ld'].max():.4f}  ·  "
-                f"ρ_r={float(opt_result['gp_rho_r']):.3f}  "
-                f"α={float(opt_result['gp_alpha']):.3f}"
-            )
-        ]
-        if "gp_bias_ld" in opt_result
-        else []
-    )
-    mo.vstack(
-        [
-            mo.md("### MAP result"),
-            mo.md(
-                f"**Ne₁ = {_ne1:,.0f}** (recent) &nbsp;·&nbsp; "
-                f"**Ne₂ = {_ne2:,.0f}** (ancestral) &nbsp;·&nbsp; "
-                f"**t = {_t_map:,.0f}** gen &nbsp;·&nbsp; "
-                f"E[π] = {opt_result['E_pi']:.3e} &nbsp;·&nbsp; "
-                f"Σ log_lik = {opt_result['log_lik'].sum():.2f}"
-            ),
-            *_gp_lines,
-        ]
-    )
-    return (opt_result,)
 
 
 @app.cell
 def _(mo, model):
     mo.stop(model is None)
-    with mo.status.spinner("Learning surrogate likelihood…"):
-        model.learn_surrogate_likelihood(
-            n_map_iterations=20,
-            n_nuts_samples=20,
-            max_tolerance=0.05,
-            seed=None,
-        )
-    n_eval_points = len(model.eval_points)
-    mo.md(f"Surrogate dataset: **{n_eval_points}** MC evaluation points accumulated.")
-    return (n_eval_points,)
-
-
-@app.cell
-def _(az, mo, model, n_eval_points):
-    mo.stop(model is None and n_eval_points > 0)
-    with mo.status.spinner("Running NUTS (4 chains × 2000 samples)…"):
-        _fit = model.sample(
-            chains=4,
-            parallel_chains=4,
-            threads_per_chain=2,
+    with mo.status.spinner("NUTS sampling (no bias correction)..."):
+        idata_baseline = model.sample(
             iter_warmup=2000,
-            iter_sampling=4000,
-            show_console=False,
+            iter_sampling=2000,
             seed=1,
         )
-    idata = az.from_cmdstanpy(_fit)
-    return (idata,)
+    mo.md("Baseline sampling complete.")
+    return (idata_baseline,)
 
 
 @app.cell
-def _(idata, mo, plt):
-    mo.stop(
-        idata is None,
-        mo.md("Run NUTS sampling to see the ArviZ summary."),
-    )
-    import arviz_plots as azp
-
-    _var_names = ["Ne_values", "t_boundaries"]
-    azp.plot_pair(
-        idata,
-        var_names=_var_names,
-    )
-    plt.gca()
-    return (azp,)
-
-
-@app.cell
-def _(azp, idata):
-    azp.plot_dist(
-        idata,
-        var_names=["Ne_values", "t_boundaries"],
-    )
-    return
+def _(mo, model):
+    mo.stop(model is None)
+    with mo.status.spinner("Active learning (bias correction)..."):
+        model.active_learn_bias(
+            n_points_per_iter=5*3,
+            n_iter=5*3,
+            max_tolerance=0.1,
+            strategy="pathfinder",
+            seed=41,
+        )
+    n_pts = len(model.synthetic_points)
+    mo.md(f"Active learning complete: **{n_pts}** synthetic points accumulated.")
+    return (n_pts,)
 
 
 @app.cell
-def _(Ne1_truth, Ne2_truth, t_boundary_truth):
-    [Ne1_truth, Ne2_truth, t_boundary_truth]
-    return
+def _(left_bins, mo, model, n_pts, np, plt, right_bins):
+    mo.stop(n_pts is None or n_pts == 0)
 
-
-@app.cell
-def _(ld_data, left_bins, mo, np, opt_result, plt, right_bins):
-    mo.stop(
-        opt_result is None,
-        mo.md("Run MAP optimisation to see the LD fit."),
-    )
-    _ne1, _ne2 = opt_result["Ne_values"]
-    _t_map = opt_result["t_boundaries"][0]
+    points = model.synthetic_points
     _bin_mid = (np.array(left_bins) + np.array(right_bins)) / 2
-    _obs_mean_ld = np.mean(ld_data, axis=0)
-    _obs_sem_ld = np.std(ld_data, axis=0, ddof=1) / np.sqrt(len(ld_data))
+    _n_bins = len(_bin_mid)
 
-    _fig, _ax = plt.subplots(figsize=(7, 4))
-    _ax.errorbar(
+    # Cumulative mean and SE of relative bias after each point
+    all_bias = np.array([p["rel_bias"] for p in points])  # (n_pts, n_bins)
+    cum_mean = np.cumsum(all_bias, axis=0) / np.arange(1, len(all_bias) + 1)[:, None]
+    cum_std = np.zeros_like(cum_mean)
+    for k in range(2, len(all_bias) + 1):
+        cum_std[k - 1] = all_bias[:k].std(axis=0, ddof=1) / np.sqrt(k)
+
+    _fig, (_ax1, _ax2) = plt.subplots(1, 2, figsize=(12, 4))
+
+    # Left: one line per bin showing cumulative mean bias across points
+    for j in range(_n_bins):
+        _ax1.plot(
+            np.arange(1, len(all_bias) + 1),
+            100 * cum_mean[:, j],
+            alpha=0.6,
+            lw=1.2,
+        )
+    _ax1.axhline(0, color="gray", lw=0.8, ls="--")
+    _ax1.set_xlabel("Cumulative synthetic points")
+    _ax1.set_ylabel("Cumulative mean bias (%)")
+    _ax1.set_title("Bias convergence per bin")
+
+    # Right: final mean bias +/- SE across bins
+    final_mean = cum_mean[-1]
+    final_se = cum_std[-1]
+    _ax2.errorbar(
         _bin_mid,
-        _obs_mean_ld,
-        yerr=2 * _obs_sem_ld,
-        fmt="o",
-        color="steelblue",
+        100 * final_mean,
+        yerr=100 * final_se,
+        fmt="o-",
         ms=4,
         lw=1.2,
-        label="Observed mean LD ± 2 SEM",
+        color="purple",
     )
-    _ax.plot(
-        _bin_mid,
-        opt_result["approx_ld"],
-        "--",
-        color="tomato",
-        lw=2,
-        label="MAP approx LD (deterministic)",
-    )
-    if "corrected_ld" in opt_result:
-        _ax.plot(
-            _bin_mid,
-            opt_result["corrected_ld"],
-            "-",
-            color="darkorange",
-            lw=2,
-            label="MAP corrected LD (approx × (1 + GP bias))",
-        )
-        _bias_pct = 100 * opt_result["gp_bias_ld"]
-        _ax2 = _ax.twinx()
-        _ax2.bar(
-            _bin_mid,
-            _bias_pct,
-            width=(_bin_mid[1] - _bin_mid[0]) * 0.4,
-            color="purple",
-            alpha=0.25,
-            label="GP bias (%)",
-        )
-        _ax2.axhline(0, color="purple", lw=0.8, ls=":")
-        _ax2.set_ylabel("GP relative bias (%)", color="purple")
-        _ax2.tick_params(axis="y", colors="purple")
-
-    _ax.set_xlabel("Recombination distance (Morgans)")
-    _ax.set_ylabel("Mean LD")
-    _ax.set_title(
-        f"Two-epoch LD fit  (Ne₁={_ne1:,.0f}, Ne₂={_ne2:,.0f}, t={_t_map:,.0f} gen)"
-    )
-    _ax.legend(loc="upper right")
+    _ax2.axhline(0, color="gray", lw=0.8, ls="--")
+    _ax2.set_xlabel("Recombination distance (Morgans)")
+    _ax2.set_ylabel("Mean bias +/- SE (%)")
+    _ax2.set_title(f"Final bias estimate ({len(all_bias)} points)")
     plt.tight_layout()
     _fig
     return
 
 
 @app.cell
-def _(idata, ld_data, left_bins, mo, model, np, plt, right_bins):
-    mo.stop(
-        idata is None,
-        mo.md("Run NUTS sampling to see the posterior predictive LD."),
-    )
-    _bin_mid = (np.array(left_bins) + np.array(right_bins)) / 2
-    _obs_mean_ld = np.mean(ld_data, axis=0)
-    _obs_sem_ld = np.std(ld_data, axis=0, ddof=1) / np.sqrt(len(ld_data))
-
-    # Posterior draws: shape (chains * draws, n_bins)
-    _post = idata.posterior
-    _approx_draws = np.array(_post["approx_ld"]).reshape(-1, len(_bin_mid))
-
-    _has_surrogate = len(model.eval_points) > 0
-
-    _fig, (_ax_ld, _ax_bias) = plt.subplots(
-        2,
-        1,
-        figsize=(7, 6),
-        sharex=True,
-        gridspec_kw={"height_ratios": [3, 1]},
-    )
-
-    # --- LD panel ---
-    _approx_lo = np.percentile(_approx_draws, 5, axis=0)
-    _approx_hi = np.percentile(_approx_draws, 95, axis=0)
-    _approx_mid = _approx_draws.mean(axis=0)
-
-    _ax_ld.fill_between(_bin_mid, _approx_lo, _approx_hi, color="tomato", alpha=0.25)
-    _ax_ld.plot(
-        _bin_mid,
-        _approx_mid,
-        "-",
-        color="tomato",
-        lw=2,
-        label="Approx LD (posterior mean ± 90% CI)",
-    )
-
-    if _has_surrogate and "corrected_ld_gq" in _post:
-        _corr_draws = np.array(_post["corrected_ld_gq"]).reshape(-1, len(_bin_mid))
-        _corr_lo = np.percentile(_corr_draws, 5, axis=0)
-        _corr_hi = np.percentile(_corr_draws, 95, axis=0)
-        _corr_mid = _corr_draws.mean(axis=0)
-        _ax_ld.fill_between(
-            _bin_mid, _corr_lo, _corr_hi, color="darkorange", alpha=0.25
+def _(mo, model, n_pts):
+    mo.stop(n_pts is None or n_pts == 0)
+    with mo.status.spinner("NUTS sampling (with bias correction)..."):
+        idata_corrected = model.sample(
+            iter_warmup=2000,
+            iter_sampling=2000,
+            seed=2,
         )
-        _ax_ld.plot(
-            _bin_mid,
-            _corr_mid,
-            "-",
-            color="darkorange",
-            lw=2,
-            label="Corrected LD (posterior mean ± 90% CI)",
-        )
+    mo.md("Corrected sampling complete.")
+    return (idata_corrected,)
 
-    _ax_ld.errorbar(
-        _bin_mid,
-        _obs_mean_ld,
-        yerr=2 * _obs_sem_ld,
+
+@app.cell
+def _(idata_corrected):
+    import arviz_stats as azs
+
+    azs.summary(idata_corrected)
+    return
+
+
+@app.cell
+def _(
+    Ne1_truth,
+    Ne2_truth,
+    idata_baseline,
+    idata_corrected,
+    mo,
+    mutation_rate,
+    np,
+    pi_data,
+    plt,
+    t_boundary_truth,
+):
+    mo.stop(idata_corrected is None)
+
+    ne_base = np.array(idata_baseline["posterior"].ds["Ne_values"]).reshape(-1, 2)
+    ne_corr = np.array(idata_corrected["posterior"].ds["Ne_values"]).reshape(-1, 2)
+    t_base = np.array(idata_baseline["posterior"].ds["t_boundaries"]).ravel()
+    t_corr = np.array(idata_corrected["posterior"].ds["t_boundaries"]).ravel()
+
+    # Draw from the prior
+    _rng = np.random.default_rng(0)
+    _n_prior = 10_000
+    _log_ne_mu = np.log(np.mean(pi_data) / (4.0 * mutation_rate))
+    _log_Ne_a = _rng.normal(_log_ne_mu, 1.0, _n_prior)
+    _log_fc = _rng.normal(0, 1.0, _n_prior)
+    _prior_Ne_a = np.exp(_log_Ne_a)
+    _prior_Ne_c = np.exp(_log_Ne_a + _log_fc)
+    _prior_t0 = np.exp(_rng.normal(np.log(100.0), 0.5, _n_prior))
+
+    _fig, (_ax1, _ax2, _ax3) = plt.subplots(1, 3, figsize=(14, 4))
+    for _ax, _base, _corr, _prior, _truth, _label in [
+        (_ax1, ne_base[:, 0], ne_corr[:, 0], _prior_Ne_c, Ne1_truth, "Ne recent"),
+        (_ax2, ne_base[:, 1], ne_corr[:, 1], _prior_Ne_a, Ne2_truth, "Ne ancestral"),
+        (_ax3, t_base, t_corr, _prior_t0, t_boundary_truth, "t boundary (gen)"),
+    ]:
+        _ax.hist(_prior, bins=50, alpha=0.25, density=True, label="Prior", color="gray")
+        _ax.hist(_base, bins=50, alpha=0.5, density=True, label="Baseline")
+        _ax.hist(_corr, bins=50, alpha=0.5, density=True, label="Corrected")
+        _ax.axvline(_truth, color="black", ls="--", lw=2, label=f"Truth ({_truth:,})")
+        _ax.set_xlabel(_label)
+        _ax.set_ylabel("Density")
+        _ax.legend(fontsize=8)
+    _fig.suptitle("Prior & posterior: baseline vs bias-corrected")
+    plt.tight_layout()
+    _fig
+    return
+
+
+@app.cell
+def _(
+    idata_baseline,
+    idata_corrected,
+    ld_data,
+    left_bins,
+    mo,
+    np,
+    plt,
+    right_bins,
+):
+    mo.stop(idata_corrected is None)
+
+    bin_mid = (np.array(left_bins) + np.array(right_bins)) / 2
+    obs_mean_ld = np.mean(ld_data, axis=0)
+    obs_sem_ld = np.std(ld_data, axis=0, ddof=1) / np.sqrt(len(ld_data))
+
+    _fig, (ax_ld, ax_bias) = plt.subplots(
+        2, 1, figsize=(7, 6), sharex=True, gridspec_kw={"height_ratios": [3, 1]}
+    )
+
+    # Baseline corrected_ld
+    base_ld = np.array(idata_baseline["posterior"].ds["corrected_ld"]).reshape(
+        -1, len(bin_mid)
+    )
+    base_lo, base_hi = np.percentile(base_ld, [5, 95], axis=0)
+    ax_ld.fill_between(bin_mid, base_lo, base_hi, color="tomato", alpha=0.2)
+    ax_ld.plot(
+        bin_mid, base_ld.mean(axis=0), "-", color="tomato", lw=2, label="Baseline"
+    )
+
+    # Corrected
+    corr_ld = np.array(idata_corrected["posterior"].ds["corrected_ld"]).reshape(
+        -1, len(bin_mid)
+    )
+    corr_lo, corr_hi = np.percentile(corr_ld, [5, 95], axis=0)
+    ax_ld.fill_between(bin_mid, corr_lo, corr_hi, color="darkorange", alpha=0.2)
+    ax_ld.plot(
+        bin_mid, corr_ld.mean(axis=0), "-", color="darkorange", lw=2, label="Corrected"
+    )
+
+    ax_ld.errorbar(
+        bin_mid,
+        obs_mean_ld,
+        yerr=2 * obs_sem_ld,
         fmt="o",
         color="steelblue",
         ms=4,
         lw=1.2,
         zorder=5,
-        label="Observed mean LD ± 2 SEM",
+        label="Observed +/- 2 SEM",
     )
-    _ax_ld.set_ylabel("Mean LD")
-    _ax_ld.set_title("Posterior predictive LD")
-    _ax_ld.legend(fontsize=8)
+    ax_ld.set_ylabel("Mean LD")
+    ax_ld.set_title("Posterior predictive LD")
+    ax_ld.legend(fontsize=8)
 
-    # --- Bias panel ---
-    if _has_surrogate and "gp_bias_ld" in _post:
-        _bias_draws = np.array(_post["gp_bias_ld"]).reshape(-1, len(_bin_mid))
-        _bias_lo = np.percentile(_bias_draws, 5, axis=0)
-        _bias_hi = np.percentile(_bias_draws, 95, axis=0)
-        _bias_mid = _bias_draws.mean(axis=0)
-        _ax_bias.fill_between(
-            _bin_mid, 100 * _bias_lo, 100 * _bias_hi, color="purple", alpha=0.25
-        )
-        _ax_bias.plot(_bin_mid, 100 * _bias_mid, "-", color="purple", lw=2)
-        _ax_bias.axhline(0, color="gray", lw=0.8, ls="--")
-        _ax_bias.set_ylabel("GP bias (%)")
-    else:
-        _ax_bias.text(
-            0.5,
-            0.5,
-            "No surrogate active",
-            ha="center",
-            va="center",
-            transform=_ax_bias.transAxes,
-            color="gray",
-        )
-        _ax_bias.set_ylabel("GP bias (%)")
-
-    _ax_bias.set_xlabel("Recombination distance (Morgans)")
+    # GP bias panel
+    bias_draws = np.array(idata_corrected["posterior"].ds["gp_bias_ld"]).reshape(
+        -1, len(bin_mid)
+    )
+    bias_lo, bias_hi = np.percentile(bias_draws, [5, 95], axis=0)
+    ax_bias.fill_between(
+        bin_mid, 100 * bias_lo, 100 * bias_hi, color="purple", alpha=0.25
+    )
+    ax_bias.plot(bin_mid, 100 * bias_draws.mean(axis=0), "-", color="purple", lw=2)
+    ax_bias.axhline(0, color="gray", lw=0.8, ls="--")
+    ax_bias.set_ylabel("GP bias (%)")
+    ax_bias.set_xlabel("Recombination distance (Morgans)")
     plt.tight_layout()
     _fig
     return

@@ -149,6 +149,9 @@ def _(
     window_length,
 ):
     mo.stop(pi_data is None, mo.callout(mo.md("Simulate data first."), kind="warn"))
+    # Reparameterize: use (log_Ne_c, log_Ne_a, log_t0) as independent parameters
+    # instead of (log_Ne_a, log_fold_change, log_t0) which creates correlation
+    # between log_Ne_a and log_fold_change since Ne_c = Ne_a * exp(fold_change).
     # Generic broad priors covering slider ranges (Ne: 10–50,000; t0: 1–500)
     model = PiecewiseExponentialDemography(
         diversity=pi_data,
@@ -160,13 +163,23 @@ def _(
         right_bins=right_bins,
         sequence_length=window_length,
         num_workers=8,
+        parameters="""\
+    real<offset=log_ne_offset> log_Ne_c;
+    real<offset=log_ne_offset> log_Ne_a;
+    real log_t0;""",
+        transformed_parameters="""\
+    real<lower=0> Ne_c = exp(log_Ne_c);
+    real<lower=0> Ne_a = exp(log_Ne_a);
+    real<lower=0> t0   = exp(log_t0);
+    real log_fold_change = log_Ne_c - log_Ne_a;
+    real alpha = log_fold_change / t0;""",
         prior=(
+            f"    log_Ne_c ~ normal({np.log(5000.0):.4f}, 1.5);\n"
             f"    log_Ne_a ~ normal({np.log(5000.0):.4f}, 1.5);\n"
-            f"    log_t0   ~ normal({np.log(50.0):.4f}, 1.5);\n"
-            f"    log_fold_change ~ normal(0, 1.5);"
+            f"    log_t0   ~ normal({np.log(50.0):.4f}, 1.5);"
         ),
     )
-    mo.md("Model compiled.")
+    mo.md("Model compiled (reparameterized).")
     return (model,)
 
 
@@ -188,8 +201,8 @@ def _(mo, model):
     mo.stop(model is None)
     with mo.status.spinner("Active learning (bias correction)..."):
         model.active_learn_bias(
-            n_points_per_iter=5,
-            n_iter=5,
+            n_points_per_iter=5*3,
+            n_iter=5*3,
             max_tolerance=0.1,
             strategy="pathfinder",
             seed=41,

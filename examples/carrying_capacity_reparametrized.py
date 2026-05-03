@@ -11,9 +11,9 @@ def _():
     import matplotlib.pyplot as plt
     from bayesld import linear_bins
     from bayesld import montecarlo as mc
-    from bayesld.models import PiecewiseExponentialDemography
+    from bayesld.models import ExponentialCarryingCapacityDemography
 
-    return PiecewiseExponentialDemography, linear_bins, mc, mo, np, plt
+    return ExponentialCarryingCapacityDemography, linear_bins, mc, mo, np, plt
 
 
 @app.cell
@@ -34,13 +34,16 @@ def _(linear_bins):
 @app.cell
 def _(mo):
     ne_c_slider = mo.ui.slider(
-        10, 50_000, value=4000, step=10, label="Ne_c (contemporary, truth)"
+        10, 50_000, value=100, step=10, label="Ne_c (contemporary, truth)"
     )
     ne_a_slider = mo.ui.slider(
-        10, 50_000, value=10000, step=10, label="Ne_a (ancestral, truth)"
+        10, 50_000, value=200, step=10, label="Ne_a (ancestral, truth)"
     )
     t0_slider = mo.ui.slider(
-        1, 500, value=30, step=1, label="t0 (transition time, gen ago)"
+        1, 200, value=20, step=1, label="t0 (start exponential phase, gen ago)"
+    )
+    t1_slider = mo.ui.slider(
+        10, 1000, value=200, step=10, label="t1 (end exponential phase, gen ago)"
     )
     sample_size_slider = mo.ui.slider(
         10, 200, value=50, step=10, label="Sample size (diploid)"
@@ -52,6 +55,7 @@ def _(mo):
             ne_c_slider,
             ne_a_slider,
             t0_slider,
+            t1_slider,
             sample_size_slider,
             num_windows_slider,
         ]
@@ -62,6 +66,7 @@ def _(mo):
         num_windows_slider,
         sample_size_slider,
         t0_slider,
+        t1_slider,
     )
 
 
@@ -72,13 +77,15 @@ def _(
     num_windows_slider,
     sample_size_slider,
     t0_slider,
+    t1_slider,
 ):
     Ne_c_truth = ne_c_slider.value
     Ne_a_truth = ne_a_slider.value
     t0_truth = t0_slider.value
+    t1_truth = t1_slider.value
     sample_size = sample_size_slider.value
     num_windows = num_windows_slider.value
-    return Ne_a_truth, Ne_c_truth, num_windows, sample_size, t0_truth
+    return Ne_a_truth, Ne_c_truth, num_windows, sample_size, t0_truth, t1_truth
 
 
 @app.cell
@@ -95,18 +102,25 @@ def _(
     right_bins,
     sample_size,
     t0_truth,
+    t1_truth,
     window_length,
 ):
+    mo.stop(
+        t0_truth >= t1_truth,
+        mo.callout(mo.md("t0 must be less than t1."), kind="warn"),
+    )
     _lfc = float(np.log(Ne_c_truth / Ne_a_truth)) if Ne_a_truth > 0 else 0.0
-    _alpha = _lfc / t0_truth if t0_truth > 0 else 0.0
+    _alpha = _lfc / (t1_truth - t0_truth) if t1_truth > t0_truth else 0.0
     with mo.status.spinner(
         f"Simulating {num_windows} windows at "
-        f"Ne_c={Ne_c_truth:,}, Ne_a={Ne_a_truth:,}, t0={t0_truth}..."
+        f"Ne_c={Ne_c_truth:,}, Ne_a={Ne_a_truth:,}, "
+        f"t0={t0_truth}, t1={t1_truth}..."
     ):
-        _pi, _ld = mc.expected_piecewise_exponential(
+        _pi, _ld = mc.expected_exponential_carrying_capacity(
             float(Ne_c_truth),
             float(Ne_a_truth),
             float(t0_truth),
+            float(t1_truth),
             float(_alpha),
             left_bins,
             right_bins,
@@ -118,7 +132,6 @@ def _(
             num_replicates=num_windows,
             ploidy=2,
             num_workers=8,
-            model="hudson",
         )
     pi_data = np.array(_pi)
     ld_data = np.array(_ld)
@@ -126,7 +139,7 @@ def _(
         mo.md(
             f"Simulated **{len(pi_data)}** windows - "
             f"Ne_c={Ne_c_truth:,}, Ne_a={Ne_a_truth:,}, "
-            f"t0={t0_truth} gen, alpha={_alpha:.4f} - "
+            f"t0={t0_truth}, t1={t1_truth} gen - "
             f"n={sample_size} - L={window_length / 1e6:.0f} Mb"
         ),
         kind="success",
@@ -136,7 +149,7 @@ def _(
 
 @app.cell
 def _(
-    PiecewiseExponentialDemography,
+    ExponentialCarryingCapacityDemography,
     ld_data,
     left_bins,
     mo,
@@ -149,8 +162,12 @@ def _(
     window_length,
 ):
     mo.stop(pi_data is None, mo.callout(mo.md("Simulate data first."), kind="warn"))
-    # Generic broad priors covering slider ranges (Ne: 10–50,000; t0: 1–500)
-    model = PiecewiseExponentialDemography(
+    # Reparameterize: use (log_Ne_c, log_Ne_a, log_t_boundaries) as independent
+    # parameters instead of (log_Ne_a, log_fold_change, log_t_boundaries) which
+    # creates correlation between log_Ne_a and log_fold_change.
+    # Generic broad priors covering slider ranges
+    # Ne: 10–50,000; t0: 1–200; t1: 10–1,000
+    model = ExponentialCarryingCapacityDemography(
         diversity=pi_data,
         ld=ld_data,
         mutation_rate=mutation_rate,
@@ -160,13 +177,25 @@ def _(
         right_bins=right_bins,
         sequence_length=window_length,
         num_workers=8,
+        parameters="""\
+    real<offset=log_ne_offset> log_Ne_c;
+    real<offset=log_ne_offset> log_Ne_a;
+    ordered[2] log_t_boundaries;""",
+        transformed_parameters="""\
+    real<lower=0> Ne_c = exp(log_Ne_c);
+    real<lower=0> Ne_a = exp(log_Ne_a);
+    real<lower=0> t0   = exp(log_t_boundaries[1]);
+    real<lower=0> t1   = exp(log_t_boundaries[2]);
+    real log_fold_change = log_Ne_c - log_Ne_a;
+    real alpha = log_fold_change / (t1 - t0);""",
         prior=(
+            f"    log_Ne_c ~ normal({np.log(5000.0):.4f}, 1.5);\n"
             f"    log_Ne_a ~ normal({np.log(5000.0):.4f}, 1.5);\n"
-            f"    log_t0   ~ normal({np.log(50.0):.4f}, 1.5);\n"
-            f"    log_fold_change ~ normal(0, 1.5);"
+            f"    log_t_boundaries[1] ~ normal({np.log(50.0):.4f}, 1.5);\n"
+            f"    log_t_boundaries[2] ~ normal({np.log(200.0):.4f}, 1.5);"
         ),
     )
-    mo.md("Model compiled.")
+    mo.md("Model compiled (reparameterized).")
     return (model,)
 
 
@@ -188,8 +217,8 @@ def _(mo, model):
     mo.stop(model is None)
     with mo.status.spinner("Active learning (bias correction)..."):
         model.active_learn_bias(
-            n_points_per_iter=5,
-            n_iter=5,
+            n_points_per_iter=5*4,
+            n_iter=5*4,
             max_tolerance=0.1,
             strategy="pathfinder",
             seed=41,
@@ -272,7 +301,16 @@ def _(idata_corrected):
 
 
 @app.cell
-def _(Ne_a_truth, Ne_c_truth, mutation_rate, np, pi_data, plt, t0_truth):
+def _(
+    Ne_a_truth,
+    Ne_c_truth,
+    mutation_rate,
+    np,
+    pi_data,
+    plt,
+    t0_truth,
+    t1_truth,
+):
     # Draw from the prior
     _rng = np.random.default_rng(0)
     _n_prior = 10_000
@@ -282,12 +320,14 @@ def _(Ne_a_truth, Ne_c_truth, mutation_rate, np, pi_data, plt, t0_truth):
     _prior_Ne_a = np.exp(_log_Ne_a)
     _prior_Ne_c = np.exp(_log_Ne_a + _log_fc)
     _prior_t0 = np.exp(_rng.normal(np.log(100.0), 0.5, _n_prior))
+    _prior_t1 = np.exp(_rng.normal(np.log(200.0), 1.0, _n_prior))
 
-    _fig, (_ax1, _ax2, _ax3) = plt.subplots(1, 3, figsize=(14, 4))
+    _fig, (_ax1, _ax2, _ax3, _ax4) = plt.subplots(1, 4, figsize=(18, 4))
     for _ax, _prior, _truth, _label in [
         (_ax1, _prior_Ne_c, Ne_c_truth, "Ne_c"),
         (_ax2, _prior_Ne_a, Ne_a_truth, "Ne_a"),
         (_ax3, _prior_t0, t0_truth, "t0 (gen)"),
+        (_ax4, _prior_t1, t1_truth, "t1 (gen)"),
     ]:
         _ax.hist(_prior, bins=50, alpha=0.5, density=True, color="gray")
         _ax.axvline(_truth, color="black", ls="--", lw=2, label=f"Truth ({_truth:,})")
@@ -310,6 +350,7 @@ def _(
     np,
     plt,
     t0_truth,
+    t1_truth,
 ):
     mo.stop(idata_corrected is None)
 
@@ -319,12 +360,15 @@ def _(
     ne_a_corr = np.array(idata_corrected["posterior"].ds["Ne_a"]).ravel()
     t0_base = np.array(idata_baseline["posterior"].ds["t0"]).ravel()
     t0_corr = np.array(idata_corrected["posterior"].ds["t0"]).ravel()
+    t1_base = np.array(idata_baseline["posterior"].ds["t1"]).ravel()
+    t1_corr = np.array(idata_corrected["posterior"].ds["t1"]).ravel()
 
-    _fig, (_ax1, _ax2, _ax3) = plt.subplots(1, 3, figsize=(14, 4))
+    _fig, (_ax1, _ax2, _ax3, _ax4) = plt.subplots(1, 4, figsize=(18, 4))
     for _ax, _base, _corr, _truth, _label in [
         (_ax1, ne_c_base, ne_c_corr, Ne_c_truth, "Ne_c"),
         (_ax2, ne_a_base, ne_a_corr, Ne_a_truth, "Ne_a"),
         (_ax3, t0_base, t0_corr, t0_truth, "t0 (gen)"),
+        (_ax4, t1_base, t1_corr, t1_truth, "t1 (gen)"),
     ]:
         _ax.hist(_base, bins=50, alpha=0.5, density=True, label="Baseline")
         _ax.hist(_corr, bins=50, alpha=0.5, density=True, label="Corrected")
