@@ -7,7 +7,7 @@ use numpy::PyArray2;
 use numpy::PyReadonlyArray1;
 use numpy::PyReadonlyArray2;
 use pyo3::prelude::*;
-use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::simd::f64x8;
 use std::simd::prelude::SimdFloat;
 pub const LANES: usize = 8;
@@ -165,12 +165,82 @@ impl Ploidy {
     }
 }
 
+/// Metadata for one site stored in the rolling window.
+#[derive(Clone, Copy)]
+struct SiteEntry {
+    genetic_pos_morgan: f64,
+    interval_idx: usize,
+}
+
+/// Contiguous rolling window of sites awaiting pair processing.
+///
+/// Genotypes are stored in a flat `Vec<f64>` (stride = `n_samples`) so that
+/// `linkage_disequilibrium` always receives contiguous slices — important for
+/// SIMD. Entries that have been processed are logically removed by advancing
+/// `head`; the dead prefix is compacted once it exceeds the live region.
+struct RollingWindow {
+    entries: VecDeque<SiteEntry>,
+    genotypes: Vec<f64>, // flat, stride = n_samples
+    head: usize,         // number of entries already drained from genotypes
+    n_samples: usize,
+}
+
+impl RollingWindow {
+    fn new() -> Self {
+        Self {
+            entries: VecDeque::new(),
+            genotypes: Vec::new(),
+            head: 0,
+            n_samples: 0,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Append a new site. `gt` must have the same length as all previous pushes.
+    fn push(&mut self, entry: SiteEntry, gt: &[f64]) {
+        if self.n_samples == 0 {
+            self.n_samples = gt.len();
+        }
+        debug_assert_eq!(gt.len(), self.n_samples);
+        self.entries.push_back(entry);
+        self.genotypes.extend_from_slice(gt);
+    }
+
+    /// Contiguous genotype slice for logical index `i` (0 = front of live region).
+    fn get_genotypes(&self, i: usize) -> &[f64] {
+        let start = (self.head + i) * self.n_samples;
+        &self.genotypes[start..start + self.n_samples]
+    }
+
+    fn front(&self) -> Option<SiteEntry> {
+        self.entries.front().copied()
+    }
+
+    fn back(&self) -> Option<SiteEntry> {
+        self.entries.back().copied()
+    }
+
+    /// Remove the front entry (O(1)).
+    fn pop_front(&mut self) {
+        self.entries.pop_front();
+        self.head += 1;
+        // Compact when dead space exceeds live space — amortises the O(n) drain.
+        if self.head > self.entries.len() {
+            let byte_offset = self.head * self.n_samples;
+            self.genotypes.drain(..byte_offset);
+            self.head = 0;
+        }
+    }
+}
+
 pub struct StreamingStats {
     left_bins: Vec<f64>,  // Morgan
     right_bins: Vec<f64>, // Morgan
     rate_map: RateMap,
-    // pos_bp → (genetic_pos_morgan, interval_idx, standardized_gt)
-    rolling_map: BTreeMap<u64, (f64, usize, Vec<f64>)>,
+    window: RollingWindow,
     maf_threshold: f64,
     genetic_diversity: OnlineAverage,
     linkage_disequilibrium: Vec<OnlineAverage>,
@@ -185,7 +255,7 @@ impl StreamingStats {
             left_bins,
             right_bins,
             rate_map,
-            rolling_map: BTreeMap::new(),
+            window: RollingWindow::new(),
             maf_threshold: 0.25,
             genetic_diversity: OnlineAverage::new(),
             linkage_disequilibrium: vec![OnlineAverage::new(); n],
@@ -217,8 +287,77 @@ impl StreamingStats {
 
         let interval_idx = self.rate_map.interval_of(position_bp as f64);
         let standardized = self.ploidy.standardize(genotypes, site.allele_frequency);
-        self.rolling_map
-            .insert(position_bp, (genetic_pos, interval_idx, standardized));
+        self.window.push(
+            SiteEntry {
+                genetic_pos_morgan: genetic_pos,
+                interval_idx,
+            },
+            &standardized,
+        );
+    }
+
+    /// Process all pairs whose front entry can no longer gain new partners
+    /// (i.e. the window span already exceeds max_bin).
+    fn process_ready_pairs(&mut self) {
+        let max_bin = *self.right_bins.last().expect("bins are non-empty");
+        let min_bin = *self.left_bins.first().expect("bins are non-empty");
+
+        while self.window.len() > 1 {
+            let first_gp = self.window.front().expect("len > 1").genetic_pos_morgan;
+            let last_gp = self.window.back().expect("len > 1").genetic_pos_morgan;
+            if last_gp - first_gp <= max_bin {
+                // A future site might still pair with the front — keep it.
+                break;
+            }
+            self.process_and_pop_front(max_bin, min_bin);
+        }
+    }
+
+    /// Pop the front entry and compute its LD pairs against all remaining entries.
+    fn process_and_pop_front(&mut self, max_bin: f64, min_bin: f64) {
+        let front = self.window.front().expect("called with non-empty window");
+        let genetic_pos1 = front.genetic_pos_morgan;
+        let interval_idx1 = front.interval_idx;
+
+        // bin_index is monotone: distances strictly increase as we iterate,
+        // so bin_index never needs to go backwards.
+        let mut bin_index = 0;
+        for i in 1..self.window.len() {
+            let entry = self.window.entries[i];
+            let distance = entry.genetic_pos_morgan - genetic_pos1;
+            if distance > max_bin {
+                break;
+            }
+            if distance < min_bin {
+                continue;
+            }
+
+            // NaN span check: any NaN interval between the two sites?
+            // nan_prefix is non-decreasing, so once a NaN gap appears all
+            // subsequent (farther) sites will also have one — break, not continue.
+            if self.rate_map.nan_prefix[entry.interval_idx + 1]
+                - self.rate_map.nan_prefix[interval_idx1]
+                > 0
+            {
+                break;
+            }
+
+            // Advance past bins whose right edge is below this distance.
+            while bin_index < self.left_bins.len() && distance > self.right_bins[bin_index] {
+                bin_index += 1;
+            }
+            if bin_index >= self.left_bins.len() {
+                break;
+            }
+            if distance >= self.left_bins[bin_index] {
+                let gt1 = self.window.get_genotypes(0);
+                let gt2 = self.window.get_genotypes(i);
+                let ld = linkage_disequilibrium(gt1, gt2);
+                self.linkage_disequilibrium[bin_index].update(ld);
+            }
+        }
+
+        self.window.pop_front();
     }
 
     fn add_batch(
@@ -237,9 +376,6 @@ impl StreamingStats {
                 shape[0]
             )));
         }
-
-        let max_bin = *self.right_bins.last().expect("bins are empty");
-        let min_bin = *self.left_bins.first().expect("bins are empty");
 
         // Add sites from this batch, counting only those outside NaN regions
         let mut n_valid_sites = 0u64;
@@ -262,104 +398,18 @@ impl StreamingStats {
         );
         self.genetic_diversity.update_with_count(0.0, num_homref);
 
-        // Process pairs from the front of the rolling map.
-        // We only remove the front when the genetic span from front to back exceeds max_bin,
-        // meaning no future site can pair with the front within any bin.
-        while self.rolling_map.len() > 1 {
-            let first_gp = self.rolling_map.first_key_value().expect("len > 1").1 .0;
-            let last_gp = self.rolling_map.last_key_value().expect("len > 1").1 .0;
-            if last_gp - first_gp <= max_bin {
-                // Future sites could still pair with the front (within max_bin),
-                // so we can't remove it yet.
-                break;
-            }
-
-            let (_, (genetic_pos1, interval_idx1, genotypes1)) = self
-                .rolling_map
-                .pop_first()
-                .expect("checked non-empty in while condition");
-
-            // bin_index is monotone: distances strictly increase as we iterate,
-            // so bin_index never needs to go backwards.
-            let mut bin_index = 0;
-            for (_, (genetic_pos2, interval_idx2, genotypes2)) in self.rolling_map.iter() {
-                let distance = genetic_pos2 - genetic_pos1;
-                if distance > max_bin {
-                    break;
-                }
-                if distance < min_bin {
-                    continue;
-                }
-
-                // NaN span check: any NaN interval between the two sites?
-                // nan_prefix is non-decreasing, so once a NaN gap appears all
-                // subsequent (farther) sites will also have one — break, not continue.
-                if self.rate_map.nan_prefix[interval_idx2 + 1]
-                    - self.rate_map.nan_prefix[interval_idx1]
-                    > 0
-                {
-                    break;
-                }
-
-                // Advance past bins whose right edge is below this distance.
-                while bin_index < self.left_bins.len()
-                    && distance > self.right_bins[bin_index]
-                {
-                    bin_index += 1;
-                }
-                if bin_index >= self.left_bins.len() {
-                    break;
-                }
-                if distance >= self.left_bins[bin_index] {
-                    let ld = linkage_disequilibrium(&genotypes1, genotypes2);
-                    self.linkage_disequilibrium[bin_index].update(ld);
-                }
-            }
-        }
+        // Process all front entries whose window span already exceeds max_bin.
+        self.process_ready_pairs();
         Ok(())
     }
 
     fn finalize<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        let max_bin = *self.right_bins.last().expect("bins are empty");
-        let min_bin = *self.left_bins.first().expect("bins are empty");
+        let max_bin = *self.right_bins.last().expect("bins are non-empty");
+        let min_bin = *self.left_bins.first().expect("bins are non-empty");
 
-        // Drain all remaining entries (no span guard — process everything left)
-        while self.rolling_map.len() > 1 {
-            let (_, (genetic_pos1, interval_idx1, genotypes1)) = self
-                .rolling_map
-                .pop_first()
-                .expect("checked len > 1 in while condition");
-
-            let mut bin_index = 0;
-            for (_, (genetic_pos2, interval_idx2, genotypes2)) in self.rolling_map.iter() {
-                let distance = genetic_pos2 - genetic_pos1;
-                if distance > max_bin {
-                    break;
-                }
-                if distance < min_bin {
-                    continue;
-                }
-
-                if self.rate_map.nan_prefix[interval_idx2 + 1]
-                    - self.rate_map.nan_prefix[interval_idx1]
-                    > 0
-                {
-                    continue;
-                }
-
-                while bin_index < self.left_bins.len()
-                    && distance > self.right_bins[bin_index]
-                {
-                    bin_index += 1;
-                }
-                if bin_index >= self.left_bins.len() {
-                    break;
-                }
-                if distance >= self.left_bins[bin_index] {
-                    let ld = linkage_disequilibrium(&genotypes1, genotypes2);
-                    self.linkage_disequilibrium[bin_index].update(ld);
-                }
-            }
+        // Drain all remaining entries — no span guard here.
+        while self.window.len() > 1 {
+            self.process_and_pop_front(max_bin, min_bin);
         }
 
         let mut mean = vec![0.0; self.linkage_disequilibrium.len() + 1];
@@ -391,7 +441,12 @@ impl StreamingStatsDiploid {
     ) -> PyResult<Self> {
         let rate_map = RateMap::build(map_position_bp, map_rate)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        let stats = StreamingStats::new(left_bins_morgan, right_bins_morgan, Ploidy::Diploid, rate_map);
+        let stats = StreamingStats::new(
+            left_bins_morgan,
+            right_bins_morgan,
+            Ploidy::Diploid,
+            rate_map,
+        );
         Ok(Self { _inner: stats })
     }
 
@@ -425,7 +480,12 @@ impl StreamingStatsHaploid {
     ) -> PyResult<Self> {
         let rate_map = RateMap::build(map_position_bp, map_rate)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        let stats = StreamingStats::new(left_bins_morgan, right_bins_morgan, Ploidy::Haploid, rate_map);
+        let stats = StreamingStats::new(
+            left_bins_morgan,
+            right_bins_morgan,
+            Ploidy::Haploid,
+            rate_map,
+        );
         Ok(Self { _inner: stats })
     }
 
