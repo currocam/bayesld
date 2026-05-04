@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "bayesld @ git+https://github.com/currocam/bayesld.git@a78bf21",
+#     "bayesld @ git+https://github.com/currocam/bayesld.git@2e20fa7",
 #     "marimo",
 #     "matplotlib",
 #     "numpy",
@@ -300,9 +300,14 @@ def _(
     )
 
     _ax.errorbar(
-        _ne_arr, _mean_arr,
+        _ne_arr,
+        _mean_arr,
         yerr=[_mean_arr - _lo_arr, _hi_arr - _mean_arr],
-        fmt="o-", color="C0", linewidth=2, markersize=6, capsize=4,
+        fmt="o-",
+        color="C0",
+        linewidth=2,
+        markersize=6,
+        capsize=4,
     )
     _ax.axhline(0, color="grey", linestyle="--", linewidth=0.8)
     _ax.set_xscale("log")
@@ -310,7 +315,7 @@ def _(
     _ax.set_ylabel("Relative error (predicted − observed) / observed")
     _ax.set_title(
         f"Prediction error at shortest distance bin "
-        f"({left_bins[0]*100:.2f}–{right_bins[0]*100:.2f} cM)"
+        f"({left_bins[0] * 100:.2f}–{right_bins[0] * 100:.2f} cM)"
     )
 
     plt.tight_layout()

@@ -1,8 +1,8 @@
-#!/usr/bin/env -S uv run --script --isolated
+#!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "bayesld @ git+https://github.com/currocam/bayesld.git@a78bf21",
+#     "bayesld @ git+https://github.com/currocam/bayesld.git@2e20fa7",
 #     "msprime==1.4.0",
 #     "numpy==2.2.6",
 #     "stdpopsim==0.3.0",
@@ -46,12 +46,14 @@ def build_windows(species):
         window_bp = int(WINDOW_MORGAN / rec_rate)
         left = 0
         while left + window_bp <= chrom.length:
-            windows.append({
-                "chrom": chrom_id,
-                "left": left,
-                "right": left + window_bp,
-                "recombination_rate": rec_rate,
-            })
+            windows.append(
+                {
+                    "chrom": chrom_id,
+                    "left": left,
+                    "right": left + window_bp,
+                    "recombination_rate": rec_rate,
+                }
+            )
             left += window_bp
     assert len(windows) > 0, "Ups, window size too large for chromosome length"
     return windows

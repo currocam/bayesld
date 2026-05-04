@@ -1,8 +1,8 @@
-#!/usr/bin/env -S uv run --script --isolated
+#!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "bayesld @ git+https://github.com/currocam/bayesld.git@a78bf21",
+#     "bayesld @ git+https://github.com/currocam/bayesld.git@2e20fa7",
 #     "marimo==0.23.3",
 #     "numpy==2.2.6",
 #     "matplotlib==3.10.9",
