@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "bayesld @ git+https://github.com/currocam/bayesld.git@2e20fa7",
+#     "bayesld @ git+https://github.com/currocam/bayesld.git@ae4d14b",
 #     "marimo==0.23.3",
 #     "numpy==2.2.6",
 #     "matplotlib==3.10.9",
