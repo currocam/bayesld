@@ -3,6 +3,7 @@
 % Use the documentclass option 'lineno' to view line numbers
 \setlength{\marginparwidth}{2cm}
 \usepackage{subcaption}
+\usepackage{float}
 
 \title{Title}
 
@@ -46,7 +47,7 @@ Site-summary statistics depend on mutations, which accumulate slowly. In contras
 
 In this work, we investigate to what extent we can exploit the proxy between recent shared ancestry and long-range LD proposed by \citet{Fournier_2023} in conservation genomics and outside non-human populations and propose a novel Bayesian inference framework that combines both predictions of LD and heterozygosity to fit parametric models of $Ne(t)$ using unphased data.
 
-Mention Ne/N ratio \citep{Waples_2024}.
+Mention Ne/N ratio \citep{Waples_2024}. Combining het, and LD makes this ideal.
 
 
 \section{Tractable summary statistic}
@@ -59,7 +60,7 @@ The genetic diversity or sample heterozygosity, denoted as $\pi$, is a classical
 
 $\mathbb E[X_iX_jY_iY_j]$ is a measure of linkage disequilibrium and it measures the correlation between loci that are $u$ units apart. A pair of neutral loci that are physically in the same chromosome experience some non-zero amount of correlation which decays with distance (more opportunities to be separated during meiosis by a recombination event). However, it also depends on $Ne$. This is because higher population sizes result in a longer time to the most recent common ancestors which also results in more recombination events. Therefore, $\mathbb E[X_iX_jY_iY_j]$ is related with $Ne$, as decreases (or increases) in $Ne$ result in an increase (or decrease) in $\mathbb E[X_iX_jY_iY_j]$.
 
-Although the sample heterozygosity is informative of $Ne$, it responds slowly. This is a phenomenon known as genetic drift debt. Instead, $\mathbb E[X_iX_jY_iY_j]$ is more informative of very recent $Ne$. As an extreme example, let's study the impact of a strong bottleneck (that results in a 10x decrease in $Ne$) that happens as recently as five generations ago (see fig 1a). Whereas we observe a loss in sample heterozygosity (fig 1b), it is small compared with the rapid increase in LD (fig 1c).
+Although the sample heterozygosity is informative of $Ne$, it responds slowly. This is a phenomenon known as genetic drift debt \citep{Gargiulo_2025}. Instead, $\mathbb E[X_iX_jY_iY_j]$ is more informative of very recent $Ne$. As an extreme example, let's study the impact of a strong bottleneck (that results in a 10x decrease in $Ne$) that happens as recently as five generations ago (see fig 1a). Whereas we observe a loss in sample heterozygosity (fig 1b), it is small compared with the rapid increase in LD (fig 1c).
 
 Fig 1d and fig1e show the relative change (compared with the values from a non-affected population) as the bottleneck happens more and more generations ago. Hopefully, one can see that sample heterozygosity is not informative of the recent past whereas LD is not informative of the ancient past. XXX.
 
@@ -217,5 +218,30 @@ We found that the first source of error has relatively low impact across a wide 
 \end{figure}
 
 \bibliography{references}
+
+\clearpage
+\appendix
+\section{Stdpopsim figures}
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.8\linewidth]{figures/stdpopsim/stdpopsim_canisfamiliaris.pdf}
+	\caption{Stdpopsim model for Canis familiaris}
+	\label{fig:stdpopsim_canisfamiliaris}
+\end{figure}
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.8\linewidth]{figures/stdpopsim/stdpopsim_holsteinfriesian.pdf}
+	\caption{Stdpopsim model for Holstein Friesian}
+	\label{fig:stdpopsim_holsteinfriesian}
+\end{figure}
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.8\linewidth]{figures/stdpopsim/stdpopsim_vaquita.pdf}
+	\caption{Stdpopsim model for Vaquita}
+	\label{fig:stdpopsim_vaquita}
+\end{figure}
 
 \end{document}

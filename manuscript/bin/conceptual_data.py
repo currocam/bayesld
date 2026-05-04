@@ -22,7 +22,7 @@ from joblib import Parallel, delayed
 NE1 = 500  # Contemporary Ne
 NE2 = 5000  # Ancient Ne
 RECOMBINATION_RATE = MUTATION_RATE = 1e-8
-NUM_WINDOWS = 5 * 20
+NUM_WINDOWS = 5 * 10
 NUM_SAMPLES = 50
 RANDOM_SEED = 62387687
 NUM_WORKERS = 8
@@ -62,7 +62,7 @@ def sim_replicates(demo=None, population_size=None):
                 recombination_rate=RECOMBINATION_RATE,
                 population_size=population_size,
                 model=[
-                    msprime.DiscreteTimeWrightFisher(duration=500),
+                    msprime.DiscreteTimeWrightFisher(duration=100),
                     msprime.StandardCoalescent(),
                 ],
                 random_seed=int(s),
