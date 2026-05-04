@@ -1,11 +1,13 @@
 #![feature(portable_simd)]
 
+mod ratemap;
+pub use ratemap::{RateMap, RateMapError};
+
 use numpy::PyArray2;
 use numpy::PyReadonlyArray1;
 use numpy::PyReadonlyArray2;
 use pyo3::prelude::*;
 use std::collections::BTreeMap;
-use std::ops::Bound::Included;
 use std::simd::f64x8;
 use std::simd::prelude::SimdFloat;
 pub const LANES: usize = 8;
@@ -164,31 +166,27 @@ impl Ploidy {
 }
 
 pub struct StreamingStats {
-    left_bins_base_pairs: Vec<f64>,
-    right_bins_base_pairs: Vec<f64>,
-    // RollingMap
-    // Maps a given position to a vector of standardized genotypes
-    rolling_map: BTreeMap<u64, Vec<f64>>,
-    minor_allele_frequency_threshold: f64,
-    // Summary statistics
+    left_bins: Vec<f64>,  // Morgan
+    right_bins: Vec<f64>, // Morgan
+    rate_map: RateMap,
+    // pos_bp → (genetic_pos_morgan, interval_idx, standardized_gt)
+    rolling_map: BTreeMap<u64, (f64, usize, Vec<f64>)>,
+    maf_threshold: f64,
     genetic_diversity: OnlineAverage,
     linkage_disequilibrium: Vec<OnlineAverage>,
     ploidy: Ploidy,
 }
 
 impl StreamingStats {
-    fn new(
-        left_bins_base_pairs: Vec<f64>,
-        right_bins_base_pairs: Vec<f64>,
-        ploidy: Ploidy,
-    ) -> Self {
-        assert!(left_bins_base_pairs.len() == right_bins_base_pairs.len());
-        let n = left_bins_base_pairs.len();
+    fn new(left_bins: Vec<f64>, right_bins: Vec<f64>, ploidy: Ploidy, rate_map: RateMap) -> Self {
+        assert_eq!(left_bins.len(), right_bins.len());
+        let n = left_bins.len();
         StreamingStats {
-            left_bins_base_pairs,
-            right_bins_base_pairs,
+            left_bins,
+            right_bins,
+            rate_map,
             rolling_map: BTreeMap::new(),
-            minor_allele_frequency_threshold: 0.25,
+            maf_threshold: 0.25,
             genetic_diversity: OnlineAverage::new(),
             linkage_disequilibrium: vec![OnlineAverage::new(); n],
             ploidy,
@@ -196,9 +194,14 @@ impl StreamingStats {
     }
 
     fn add_site(&mut self, position: i32, genotypes: &[i32]) {
-        let position = position as u64;
+        let position_bp = position as u64;
         if !self.ploidy.are_valid_genotypes(genotypes) {
-            // Should we do something?
+            return;
+        }
+
+        // Sites in NaN (masked) regions are skipped entirely — no diversity, no LD
+        let genetic_pos = self.rate_map.genetic_position_morgan(position_bp as f64);
+        if genetic_pos.is_nan() {
             return;
         }
 
@@ -207,20 +210,22 @@ impl StreamingStats {
             Ploidy::Diploid => SiteStatistics::from_diploid(genotypes),
         };
         self.genetic_diversity.update(site.genetic_diversity);
-        if site.minor_allele_frequency < self.minor_allele_frequency_threshold {
+
+        if site.minor_allele_frequency < self.maf_threshold {
             return;
         }
+
+        let interval_idx = self.rate_map.interval_of(position_bp as f64);
         let standardized = self.ploidy.standardize(genotypes, site.allele_frequency);
-        self.rolling_map.insert(position, standardized);
+        self.rolling_map
+            .insert(position_bp, (genetic_pos, interval_idx, standardized));
     }
+
     fn add_batch(
         &mut self,
         genotypes: PyReadonlyArray2<i32>,
         positions: PyReadonlyArray1<i32>,
-        // Any position not provided is assumed to be ancestral HOM
-        // The region_span argument can be adjusted to account for missing positions
-        // when computing genetic diversity
-        region_span: f64,
+        region_span: f64, // non-NaN bp in this chunk (Python computes via missing_intervals())
     ) -> PyResult<()> {
         let genotypes = genotypes.as_array();
         let positions = positions.as_array();
@@ -232,54 +237,80 @@ impl StreamingStats {
                 shape[0]
             )));
         }
-        let min_distance = *self.left_bins_base_pairs.first().expect("bins are empty");
-        let max_distance = *self.right_bins_base_pairs.last().expect("bins are empty");
-        // Add rows from the batch
+
+        let max_bin = *self.right_bins.last().expect("bins are empty");
+        let min_bin = *self.left_bins.first().expect("bins are empty");
+
+        // Add sites from this batch, counting only those outside NaN regions
+        let mut n_valid_sites = 0u64;
         for i in 0..shape[0] {
             let position = positions[i];
+            let gp = self.rate_map.genetic_position_morgan(position as f64);
+            if !gp.is_nan() {
+                n_valid_sites += 1;
+            }
             let row: Vec<i32> = genotypes.row(i).to_vec();
             self.add_site(position, &row);
         }
-        // We have to account for all the sites we did not observe because they were HOMREF
-        let num_homref = region_span - positions.len() as f64 + 1.0;
+
+        // Account for HOMREF positions: region_span is non-NaN bp, subtract observed non-NaN sites
+        let num_homref = region_span - n_valid_sites as f64 + 1.0;
         assert!(
             num_homref.is_finite() && num_homref >= 0.0,
             "num_homref: {}",
             num_homref
         );
         self.genetic_diversity.update_with_count(0.0, num_homref);
-        // Iterate over the rolling map
-        while let Some((&position1, _)) = self.rolling_map.first_key_value() {
-            let min_next = position1 + min_distance.ceil() as u64;
-            let max_next = position1 + max_distance.ceil() as u64;
-            if let Some((&last_position, _)) = self.rolling_map.last_key_value() {
-                if max_next > last_position {
-                    break;
-                }
-            } else {
+
+        // Process pairs from the front of the rolling map.
+        // We only remove the front when the genetic span from front to back exceeds max_bin,
+        // meaning no future site can pair with the front within any bin.
+        while self.rolling_map.len() > 1 {
+            let first_gp = self.rolling_map.first_key_value().expect("len > 1").1 .0;
+            let last_gp = self.rolling_map.last_key_value().expect("len > 1").1 .0;
+            if last_gp - first_gp <= max_bin {
+                // Future sites could still pair with the front (within max_bin),
+                // so we can't remove it yet.
                 break;
             }
-            let (_, genotypes1) = self.rolling_map.remove_entry(&position1).unwrap();
-            let mut bin_index = 0;
-            // Iterate across relevant values directly without collecting
-            for (position2, genotypes2) in self
+
+            let (_, (genetic_pos1, interval_idx1, genotypes1)) = self
                 .rolling_map
-                .range((Included(&min_next), Included(&max_next)))
-            {
-                let distance = (*position2 - position1) as f64;
-                // Skip bins where distance is too large
-                while bin_index < self.left_bins_base_pairs.len()
-                    && distance > self.right_bins_base_pairs[bin_index]
+                .pop_first()
+                .expect("checked non-empty in while condition");
+
+            // bin_index is monotone: distances strictly increase as we iterate,
+            // so bin_index never needs to go backwards.
+            let mut bin_index = 0;
+            for (_, (genetic_pos2, interval_idx2, genotypes2)) in self.rolling_map.iter() {
+                let distance = genetic_pos2 - genetic_pos1;
+                if distance > max_bin {
+                    break;
+                }
+                if distance < min_bin {
+                    continue;
+                }
+
+                // NaN span check: any NaN interval between the two sites?
+                // nan_prefix is non-decreasing, so once a NaN gap appears all
+                // subsequent (farther) sites will also have one — break, not continue.
+                if self.rate_map.nan_prefix[interval_idx2 + 1]
+                    - self.rate_map.nan_prefix[interval_idx1]
+                    > 0
+                {
+                    break;
+                }
+
+                // Advance past bins whose right edge is below this distance.
+                while bin_index < self.left_bins.len()
+                    && distance > self.right_bins[bin_index]
                 {
                     bin_index += 1;
                 }
-                if bin_index >= self.left_bins_base_pairs.len() {
+                if bin_index >= self.left_bins.len() {
                     break;
                 }
-                // Check if distance falls in current bin
-                if distance >= self.left_bins_base_pairs[bin_index]
-                    && distance <= self.right_bins_base_pairs[bin_index]
-                {
+                if distance >= self.left_bins[bin_index] {
                     let ld = linkage_disequilibrium(&genotypes1, genotypes2);
                     self.linkage_disequilibrium[bin_index].update(ld);
                 }
@@ -287,40 +318,50 @@ impl StreamingStats {
         }
         Ok(())
     }
-    fn finalize<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        let min_distance = *self.left_bins_base_pairs.first().expect("bins are empty");
-        let max_distance = *self.right_bins_base_pairs.last().expect("bins are empty");
-        // We are not gonna get new samples, so we have to finish processing
-        while !self.rolling_map.is_empty() {
-            let (position1, genotypes1) = self.rolling_map.pop_first().unwrap();
-            let min_next = position1 + min_distance.ceil() as u64;
-            let max_next = position1 + max_distance.ceil() as u64;
-            let mut bin_index = 0;
 
-            // Iterate across relevant values directly without collecting
-            for (position2, genotypes2) in self
+    fn finalize<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        let max_bin = *self.right_bins.last().expect("bins are empty");
+        let min_bin = *self.left_bins.first().expect("bins are empty");
+
+        // Drain all remaining entries (no span guard — process everything left)
+        while self.rolling_map.len() > 1 {
+            let (_, (genetic_pos1, interval_idx1, genotypes1)) = self
                 .rolling_map
-                .range((Included(&min_next), Included(&max_next)))
-            {
-                let distance = (*position2 - position1) as f64;
-                // Skip bins where distance is too large
-                while bin_index < self.left_bins_base_pairs.len()
-                    && distance > self.right_bins_base_pairs[bin_index]
+                .pop_first()
+                .expect("checked len > 1 in while condition");
+
+            let mut bin_index = 0;
+            for (_, (genetic_pos2, interval_idx2, genotypes2)) in self.rolling_map.iter() {
+                let distance = genetic_pos2 - genetic_pos1;
+                if distance > max_bin {
+                    break;
+                }
+                if distance < min_bin {
+                    continue;
+                }
+
+                if self.rate_map.nan_prefix[interval_idx2 + 1]
+                    - self.rate_map.nan_prefix[interval_idx1]
+                    > 0
+                {
+                    continue;
+                }
+
+                while bin_index < self.left_bins.len()
+                    && distance > self.right_bins[bin_index]
                 {
                     bin_index += 1;
                 }
-                if bin_index >= self.left_bins_base_pairs.len() {
+                if bin_index >= self.left_bins.len() {
                     break;
                 }
-                // Check if distance falls in current bin
-                if distance >= self.left_bins_base_pairs[bin_index]
-                    && distance <= self.right_bins_base_pairs[bin_index]
-                {
+                if distance >= self.left_bins[bin_index] {
                     let ld = linkage_disequilibrium(&genotypes1, genotypes2);
                     self.linkage_disequilibrium[bin_index].update(ld);
                 }
             }
         }
+
         let mut mean = vec![0.0; self.linkage_disequilibrium.len() + 1];
         let mut count = vec![0.0; self.linkage_disequilibrium.len() + 1];
         mean[0] = self.genetic_diversity.mean;
@@ -342,10 +383,16 @@ pub struct StreamingStatsDiploid {
 #[pymethods]
 impl StreamingStatsDiploid {
     #[new]
-    fn new(left_bins_base_pairs: Vec<f64>, right_bins_base_pairs: Vec<f64>) -> Self {
-        let stats =
-            StreamingStats::new(left_bins_base_pairs, right_bins_base_pairs, Ploidy::Diploid);
-        Self { _inner: stats }
+    fn new(
+        left_bins_morgan: Vec<f64>,
+        right_bins_morgan: Vec<f64>,
+        map_position_bp: Vec<f64>,
+        map_rate: Vec<f64>,
+    ) -> PyResult<Self> {
+        let rate_map = RateMap::build(map_position_bp, map_rate)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let stats = StreamingStats::new(left_bins_morgan, right_bins_morgan, Ploidy::Diploid, rate_map);
+        Ok(Self { _inner: stats })
     }
 
     fn add_batch(
@@ -370,10 +417,16 @@ pub struct StreamingStatsHaploid {
 #[pymethods]
 impl StreamingStatsHaploid {
     #[new]
-    fn new(left_bins_base_pairs: Vec<f64>, right_bins_base_pairs: Vec<f64>) -> Self {
-        let stats =
-            StreamingStats::new(left_bins_base_pairs, right_bins_base_pairs, Ploidy::Haploid);
-        Self { _inner: stats }
+    fn new(
+        left_bins_morgan: Vec<f64>,
+        right_bins_morgan: Vec<f64>,
+        map_position_bp: Vec<f64>,
+        map_rate: Vec<f64>,
+    ) -> PyResult<Self> {
+        let rate_map = RateMap::build(map_position_bp, map_rate)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let stats = StreamingStats::new(left_bins_morgan, right_bins_morgan, Ploidy::Haploid, rate_map);
+        Ok(Self { _inner: stats })
     }
 
     fn add_batch(
@@ -578,10 +631,6 @@ mod tests {
             let normalized2 = Ploidy::Haploid.standardize(&genotypes2, stats2.allele_frequency);
             let ld = linkage_disequilibrium(&normalized1, &normalized2);
             let naive_ld = naive_linkage_disequilibrium(&normalized1, &normalized2);
-            eprintln!(
-                "Sample size: {}, LD: {}, Naive LD: {}",
-                sample_size, ld, naive_ld
-            );
             assert!((ld - naive_ld).abs() < 1e-10 || (ld.is_nan() && naive_ld.is_nan()));
         }
     }

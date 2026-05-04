@@ -135,8 +135,14 @@ def test_binned_ld_random():
     left_bins = np.array([100.0, 4000.0])
     right_bins = np.array([3999.0, 100_000.0])
 
-    # Compute diversity and LD using StreamingStatsDiploid
-    streaming = bayesld.StreamingStatsDiploid(left_bins, right_bins)
+    # Use rate=1.0 so 1 bp == 1 Morgan — bins are identical in both units,
+    # and the naive bp-distance computation stays valid for comparison.
+    rate = 1.0
+    seq_len = float(region_span + 1)
+    streaming = bayesld.StreamingStatsDiploid(
+        left_bins, right_bins,
+        [0.0, seq_len], [rate],
+    )
     streaming.add_batch(genotypes, positions, region_span)
     streaming_results = streaming.finalize()
 

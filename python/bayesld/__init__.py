@@ -31,9 +31,18 @@ def linear_bins(
     return left_bins, right_bins
 
 
+def _nan_bp_in_range(missing_intervals: np.ndarray, from_bp: float, to_bp: float) -> float:
+    """Total NaN base pairs overlapping [from_bp, to_bp]."""
+    if len(missing_intervals) == 0:
+        return 0.0
+    lefts = np.maximum(missing_intervals[:, 0], from_bp)
+    rights = np.minimum(missing_intervals[:, 1], to_bp)
+    return float(np.sum(np.maximum(rights - lefts, 0.0)))
+
+
 def data_from_tree_sequence(
     ts: tskit.TreeSequence,
-    recombination_rate: float,
+    recombination_rate: "float | msprime.RateMap",
     left_bins_morgan: NDArray,
     right_bins_morgan: NDArray,
     chunk_size: int = 10_000,
@@ -50,8 +59,8 @@ def data_from_tree_sequence(
     ----------
     ts : tskit.TreeSequence
         The tree sequence object to analyze
-    recombination_rate : float
-        Recombination rate per base pair per generation
+    recombination_rate : float or msprime.RateMap
+        Recombination rate per base pair per generation, or a piecewise-constant RateMap.
     left_bins_morgan : NDArray
         Left endpoints of distance bins in Morgan.
     right_bins_morgan : NDArray
@@ -66,46 +75,66 @@ def data_from_tree_sequence(
     Returns
     -------
     dict
-        Dictionary with
+        Dictionary with LD and diversity statistics.
     """
+    # Extract rate map arrays
+    if isinstance(recombination_rate, (int, float)):
+        map_position_bp = [0.0, float(ts.sequence_length)]
+        map_rate = [float(recombination_rate)]
+        missing_intervals = np.empty((0, 2))
+    else:
+        # msprime.RateMap — has .position and .rate attributes
+        map_position_bp = list(recombination_rate.position)
+        map_rate = list(recombination_rate.rate)
+        missing_intervals = recombination_rate.missing_intervals()  # shape (n_missing, 2)
+
     if ploidy == 2:
         stats = _bayesld.StreamingStatsDiploid(
-            left_bins_morgan / recombination_rate,
-            right_bins_morgan / recombination_rate,
+            left_bins_morgan.tolist(),
+            right_bins_morgan.tolist(),
+            map_position_bp,
+            map_rate,
         )
     elif ploidy == 1:
         stats = _bayesld.StreamingStatsHaploid(
-            left_bins_morgan / recombination_rate,
-            right_bins_morgan / recombination_rate,
+            left_bins_morgan.tolist(),
+            right_bins_morgan.tolist(),
+            map_position_bp,
+            map_rate,
         )
     else:
         raise ValueError("Ploidy must be 1 or 2")
 
-    # Use tskit's Variant object for efficient decoding
     variant = tskit.Variant(ts)
     num_samples = ts.num_samples
     n_columns = num_samples // ploidy
     num_sites = ts.num_sites
     positions_all = ts.sites_position.astype("int32")
-    # Preallocate chunk arrays
     genotype_buffer = np.empty((chunk_size, n_columns), dtype=np.int32)
-    # Process in chunks
+
     iterator = tqdm(range(0, num_sites, chunk_size), disable=not progress_bar)
     for start_idx in iterator:
         end_idx = min(start_idx + chunk_size, num_sites)
         chunk_len = end_idx - start_idx
         genotype_chunk = genotype_buffer[:chunk_len]
-        # Decode variants efficiently
+
         for i, site_id in enumerate(range(start_idx, end_idx)):
             variant.decode(site_id)
-            # This part assumes diploid
             if ploidy == 2:
                 genotype_chunk[i] = variant.genotypes[0::2] + variant.genotypes[1::2]
             else:
                 genotype_chunk[i] = variant.genotypes
+
         positions_chunk = positions_all[start_idx:end_idx]
-        region_span = positions_chunk[-1] - positions_chunk[0]
+
+        # region_span = physical span of this chunk minus any NaN (masked) bp
+        chunk_start = float(positions_chunk[0])
+        chunk_end = float(positions_chunk[-1])
+        nan_bp = _nan_bp_in_range(missing_intervals, chunk_start, chunk_end)
+        region_span = (chunk_end - chunk_start) - nan_bp
+
         stats.add_batch(genotype_chunk, positions_chunk, region_span)
+
     mat = stats.finalize()
     return {
         "sample_size": n_columns,
