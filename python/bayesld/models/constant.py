@@ -129,6 +129,8 @@ transformed parameters {{
         mu_ld_constant(Ne, left_bins, right_bins), sample_size
     );
     vector[n_bins] corrected_ld = approx_expected_ld .* (1.0 + gp_bias_ld);
+    if (is_nan(sum(corrected_ld)) || is_inf(sum(corrected_ld)))
+        reject("corrected_ld contains nan/inf; Ne = ", Ne);
 }}
 
 model {{
