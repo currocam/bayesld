@@ -40,7 +40,7 @@ def main():
     args = parser.parse_args()
 
     rng = np.random.default_rng(args.seed)
-    num_draws = rng.lognormal(
+    ne_draws = rng.lognormal(
         mean=np.log(args.prior_ne), sigma=args.prior_sigma, size=args.batch_size
     )
 
@@ -48,7 +48,7 @@ def main():
     window_length = right_bins[-1] * 2 / RECOMBINATION_RATE
 
     datasets = []
-    for i, ne in enumerate(num_draws):
+    for i, ne in enumerate(ne_draws):
         pi, ld = mc.expected_constant(
             ne,
             left_bins,
@@ -68,7 +68,7 @@ def main():
     with open(args.output, "wb") as f:
         pickle.dump(
             {
-                "num_draws": num_draws,
+                "ne_draws": ne_draws,
                 "datasets": datasets,
                 "left_bins": left_bins,
                 "right_bins": right_bins,
