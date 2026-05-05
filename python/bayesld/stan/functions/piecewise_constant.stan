@@ -9,23 +9,31 @@
 // Survival probability at genetic distance u.
 // i.e. the probability that two loci separated by distance u have not experienced
 // a recombination since the common ancestor.
+//
+// Numerically stable via log-sum-exp accumulation:
+//   log_term[i] = -Gamma_prev - 2u*t_prev + log1m_exp(-c*dt) - log1p(4*Ne_i*u)
+// This avoids (1) catastrophic cancellation in (1-exp(-c*dt)) when c*dt≪1, and
+// (2) underflow of exp(-Gamma_prev - 2u*t_prev) when the cumulative hazard is large.
 real S_u_piecewise_constant(real u, int n_epochs, vector Ne_values, vector t_boundaries) {
-    real total     = 0.0;
+    array[n_epochs] real log_terms;
     real Gamma_prev = 0.0;   // cumulative coalescent hazard Gamma(t_prev)
-    real t_prev    = 0.0;
+    real t_prev     = 0.0;
     for (i in 1:n_epochs - 1) {
         real Ne_i   = Ne_values[i];
         real t_curr = t_boundaries[i];
         real dt     = t_curr - t_prev;
         real c      = 2.0*u + 1.0 / (2.0*Ne_i);  // combined rate at this u
-        total += exp(-Gamma_prev - 2.0*u*t_prev) * (1.0 - exp(-c * dt)) / (4.0*Ne_i*u + 1.0);
+        // log1m_exp(-c*dt) = log(1 - exp(-c*dt)); argument -c*dt < 0 always.
+        log_terms[i] = -Gamma_prev - 2.0*u*t_prev
+                       + log1m_exp(-c * dt)
+                       - log1p(4.0*Ne_i*u);
         Gamma_prev += dt / (2.0 * Ne_i);
         t_prev = t_curr;
     }
-    // Last semi-infinite epoch [t_boundaries[n_epochs-1], ∞)
+    // Last semi-infinite epoch [t_boundaries[n_epochs-1], ∞): 1 - exp(-∞) = 1.
     real Ne_last = Ne_values[n_epochs];
-    total += exp(-Gamma_prev - 2.0*u*t_prev) / (4.0*Ne_last*u + 1.0);
-    return total;
+    log_terms[n_epochs] = -Gamma_prev - 2.0*u*t_prev - log1p(4.0*Ne_last*u);
+    return exp(log_sum_exp(to_vector(log_terms)));
 }
 
 // Expected LD per bin via GL quadrature over bin width.
@@ -81,22 +89,31 @@ real ld_lp_piecewise_constant(vector mean_ld, vector est_sigma_ld, int sample_si
 }
 
 // Expected genetic diversity.
+//
+// Numerically stable via log-sum-exp; per-epoch log-contribution:
+//   log_term[i] = -Gamma_prev + log_diff_exp(log(t_prev+2Ne_i),
+//                                             log(t_curr+2Ne_i) - dt/(2Ne_i))
+// log_diff_exp avoids cancellation when dt/(2Ne_i) is small (inner terms nearly equal).
+// exp(-Gamma_prev) underflow is avoided by keeping Gamma_prev in log space.
 real mu_div_piecewise_constant(int n_epochs, vector Ne_values, vector t_boundaries,
                                 real mutation_rate) {
-    real tmrca     = 0.0;
+    array[n_epochs] real log_terms;
     real Gamma_prev = 0.0;
-    real t_prev    = 0.0;
+    real t_prev     = 0.0;
     for (i in 1:n_epochs - 1) {
         real Ne_i   = Ne_values[i];
         real t_curr = t_boundaries[i];
         real dt     = t_curr - t_prev;
-        tmrca += exp(-Gamma_prev) * ((t_prev + 2.0*Ne_i)
-                                     - (t_curr + 2.0*Ne_i) * exp(-dt / (2.0*Ne_i)));
+        // log((t_prev+2Ne_i) - (t_curr+2Ne_i)*exp(-dt/(2Ne_i)))
+        //   = log_diff_exp(log(t_prev+2Ne_i), log(t_curr+2Ne_i) - dt/(2Ne_i))
+        log_terms[i] = -Gamma_prev
+                       + log_diff_exp(log(t_prev + 2.0*Ne_i),
+                                      log(t_curr + 2.0*Ne_i) - dt / (2.0*Ne_i));
         Gamma_prev += dt / (2.0 * Ne_i);
         t_prev = t_curr;
     }
-    // Last epoch
+    // Last epoch: semi-infinite, contribution = exp(-Gamma_prev) * (t_prev + 2*Ne_last)
     real Ne_last = Ne_values[n_epochs];
-    tmrca += exp(-Gamma_prev) * (t_prev + 2.0 * Ne_last);
-    return tmrca * 2.0 * mutation_rate;
+    log_terms[n_epochs] = -Gamma_prev + log(t_prev + 2.0 * Ne_last);
+    return exp(log_sum_exp(to_vector(log_terms))) * 2.0 * mutation_rate;
 }

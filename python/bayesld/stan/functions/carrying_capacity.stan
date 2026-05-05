@@ -10,32 +10,39 @@
 // Survival probability at genetic distance u.
 // i.e. the probability that two loci separated by distance u have not experienced
 // a recombination since the common ancestor.
+//
+// Numerically stable via log-sum-exp over all three pieces:
+//   piece1: log1m_exp(-A) - log1p(4*Ne_c*u) avoids (1-exp) cancellation when A≪1.
+//   piece2: log-sum-exp over GL nodes avoids exp-sum underflow for large u or t.
+//   piece3: piece3_exp - log1p(4*Ne_a*u) stays in log space.
+//   All three combined via log_sum_exp to handle magnitude mismatch.
 real S_u_carrying_capacity(real u, real Ne_c, real Ne_a, real t0, real t1, real alpha,
                             int n_quad, vector gl_nodes, vector gl_weights) {
     real dt = t1 - t0;
 
-    // Piece 1: [0, t0] — constant Ne_c, closed form (no alpha dependence)
-    real piece1 = (1.0 - exp(-t0 * (4.0*Ne_c*u + 1.0) / (Ne_c * 2.0)))
-                  / (4.0*Ne_c*u + 1.0);
+    // Piece 1: [0, t0] — constant Ne_c, closed form
+    // Original: (1 - exp(-A)) / (4*Ne_c*u + 1)  where A = t0*(4*Ne_c*u+1)/(2*Ne_c)
+    real A = t0 * (4.0*Ne_c*u + 1.0) / (Ne_c * 2.0);
+    real log_piece1 = log1m_exp(-A) - log1p(4.0*Ne_c*u);
 
     // Piece 2: [t0, t1] — exponential growth phase, GL quadrature
     real half_dt = dt / 2.0;
     real mid_t   = (t0 + t1) / 2.0;
-    real sum2 = 0.0;
+    vector[n_quad] log_terms2;
     for (k in 1:n_quad) {
         real t_k    = half_dt * gl_nodes[k] + mid_t;
         real s      = t_k - t0;
         real exp_arg = (-s * expm1_over_x(s * alpha) + 2.0*s*Ne_c*alpha
                         - 4.0*Ne_c*t_k*u - t0) / (Ne_c * 2.0);
-        sum2 += gl_weights[k] * exp(exp_arg);
+        log_terms2[k] = log(gl_weights[k]) + exp_arg;
     }
-    real piece2 = half_dt * sum2 / (Ne_c * 2.0);
+    real log_piece2 = log(half_dt) - log(Ne_c * 2.0) + log_sum_exp(log_terms2);
 
     // Piece 3: [t1, ∞) — constant Ne_a, closed form
     real piece3_exp = (-dt * expm1_over_x(dt * alpha) - (4.0*Ne_c*t1*u + t0)) / (Ne_c * 2.0);
-    real piece3 = exp(piece3_exp) / (4.0*Ne_a*u + 1.0);
+    real log_piece3 = piece3_exp - log1p(4.0*Ne_a*u);
 
-    return piece1 + piece2 + piece3;
+    return exp(log_sum_exp([log_piece1, log_piece2, log_piece3]'));
 }
 
 // map_rect shard: computes raw LD for a single bin (parallel across bins).
@@ -89,25 +96,22 @@ vector mu_ld_carrying_capacity(real Ne_c, real Ne_a, real t0, real t1, real alph
     return result;
 }
 
+// Calls stable S_u_carrying_capacity directly — no precomputed linear-space
+// intermediates that could underflow before reaching the inner loop.
 real partial_ld_lp_cc(array[] real mean_ld_slice, int start, int end,
-                      real C1, real t0, real Ne_c,
-                      vector g, vector t_nodes,
-                      real C3, real t1, real Ne_a,
+                      real Ne_c, real Ne_a, real t0, real t1, real alpha,
                       vector left_bins, vector right_bins, vector est_sigma_ld,
-                      vector gl_nodes, vector gl_weights, int sample_size) {
+                      int n_quad, vector gl_nodes, vector gl_weights, int sample_size) {
     real lp = 0.0;
-    int n_quad = num_elements(g);
     for (i in 1:(end - start + 1)) {
         int b = start + i - 1;
         real mid = (left_bins[b] + right_bins[b]) / 2.0;
         real hw  = (right_bins[b] - left_bins[b]) / 2.0;
         real s = 0.0;
-        for (j in 1:n_quad) {
-            real u      = mid + hw * gl_nodes[j];
-            real piece1 = (1.0 - C1 * exp(-2.0 * t0 * u)) / (4.0 * Ne_c * u + 1.0);
-            real piece2 = dot_product(g, exp(-2.0 * t_nodes * u));
-            real piece3 = C3 * exp(-2.0 * t1 * u) / (4.0 * Ne_a * u + 1.0);
-            s += gl_weights[j] * (piece1 + piece2 + piece3);
+        for (k in 1:n_quad) {
+            real u_k = mid + hw * gl_nodes[k];
+            s += gl_weights[k] * S_u_carrying_capacity(u_k, Ne_c, Ne_a, t0, t1, alpha,
+                                                        n_quad, gl_nodes, gl_weights);
         }
         real mu_b = correct_ld_finite_sample_scalar(0.5 * s, sample_size);
         lp += normal_lpdf(mean_ld_slice[i] | mu_b, est_sigma_ld[b]);
@@ -119,35 +123,11 @@ real ld_lp_carrying_capacity(vector mean_ld, vector est_sigma_ld, int sample_siz
                               real Ne_c, real Ne_a, real t0, real t1, real alpha,
                               vector left_bins, vector right_bins,
                               int n_quad, vector gl_nodes, vector gl_weights) {
-    real dt      = t1 - t0;
-    real half_dt = dt / 2.0;
-    real mid_t   = (t0 + t1) / 2.0;
-    real scale   = half_dt / (Ne_c * 2.0);
-
-    // Piece 1 prefactor
-    real C1 = exp(-t0 / (2.0 * Ne_c));
-
-    // Piece 2 weights and nodes (the expensive expm1_over_x calls happen here, once)
-    vector[n_quad] g;
-    vector[n_quad] t_nodes;
-    for (k in 1:n_quad) {
-        real t_k = half_dt * gl_nodes[k] + mid_t;
-        real s_k = t_k - t0;
-        t_nodes[k] = t_k;
-        g[k] = scale * gl_weights[k]
-               * exp((-s_k * expm1_over_x(s_k * alpha) + 2.0*s_k*Ne_c*alpha - t0) / (Ne_c * 2.0));
-    }
-
-    // Piece 3 prefactor
-    real C3 = exp((-dt * expm1_over_x(dt * alpha) - t0) / (Ne_c * 2.0));
-
     array[num_elements(mean_ld)] real mean_ld_arr = to_array_1d(mean_ld);
     return reduce_sum(partial_ld_lp_cc, mean_ld_arr, 1,
-                      C1, t0, Ne_c,
-                      g, t_nodes,
-                      C3, t1, Ne_a,
+                      Ne_c, Ne_a, t0, t1, alpha,
                       left_bins, right_bins, est_sigma_ld,
-                      gl_nodes, gl_weights, sample_size);
+                      n_quad, gl_nodes, gl_weights, sample_size);
 }
 
 // Expected genetic diversity.
