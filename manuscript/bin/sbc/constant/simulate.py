@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "bayesld @ git+https://github.com/currocam/bayesld.git@2d15d5a",
+#     "bayesld @ git+https://github.com/currocam/bayesld.git@8e48ea0",
 #     "msprime==1.4.0",
 #     "numpy==2.2.6",
 # ]
