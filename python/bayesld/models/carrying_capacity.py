@@ -128,6 +128,20 @@ transformed data {{
     vector[n_bins] r_std = (bin_midpoints - r_mu) / r_sig;
     real L_r = hsgp_c * max(abs(r_std));
     matrix[n_bins, hsgp_m] PHI_r = PHI(n_bins, hsgp_m, L_r, r_std);
+
+    // Pack per-bin data for map_rect parallelism
+    array[n_bins, 2 + 2 * n_quad] real mr_bin_data;
+    array[n_bins, 1] int mr_bin_int;
+    array[n_bins] vector[0] mr_theta;
+    for (b in 1:n_bins) {{
+        mr_bin_data[b, 1] = left_bins[b];
+        mr_bin_data[b, 2] = right_bins[b];
+        for (k in 1:n_quad) {{
+            mr_bin_data[b, 2 + k] = gl_nodes[k];
+            mr_bin_data[b, 2 + n_quad + k] = gl_weights[k];
+        }}
+        mr_bin_int[b, 1] = n_quad;
+    }}
 }}
 
 parameters {{
@@ -144,9 +158,9 @@ transformed parameters {{
     vector[n_bins] gp_bias_ld = PHI_r * (spd_r .* beta_r);
     real expected_pi = mu_div_carrying_capacity(Ne_c, Ne_a, t0, t1, alpha, mutation_rate,
                                                  n_quad, gl_nodes, gl_weights);
+    vector[5] mr_phi = [Ne_c, Ne_a, t0, t1, alpha]';
     vector[n_bins] approx_expected_ld = correct_ld_finite_sample(
-        mu_ld_carrying_capacity(Ne_c, Ne_a, t0, t1, alpha,
-                                 left_bins, right_bins, n_quad, gl_nodes, gl_weights),
+        map_rect(mu_ld_shard_cc, mr_phi, mr_theta, mr_bin_data, mr_bin_int),
         sample_size
     );
     vector[n_bins] corrected_ld = approx_expected_ld .* (1.0 + gp_bias_ld);
