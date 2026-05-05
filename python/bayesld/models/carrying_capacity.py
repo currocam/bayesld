@@ -18,7 +18,7 @@ from typing import Optional
 
 import numpy as np
 
-_STAN_DIR = pathlib.Path(__file__).resolve().parent.parent.parent.parent / "stan"
+_STAN_DIR = pathlib.Path(__file__).resolve().parent.parent / "stan"
 _THREADS_OPTS = {"cpp_options": {"STAN_THREADS": "true"}}
 
 _DEFAULT_N_QUAD = 16

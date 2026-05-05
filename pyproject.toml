@@ -43,6 +43,7 @@ addopts = "-m 'not slow'"
 
 [tool.maturin]
 python-source = "python"
+include = [{path = "python/bayesld/stan/**", format = "sdist"}, {path = "python/bayesld/stan/**", format = "wheel"}]
 
 [dependency-groups]
 dev = [
