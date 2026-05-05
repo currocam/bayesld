@@ -2,8 +2,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "arviz==0.21.0",
-#     "numpy==2.2.6",
+#     "arviz>=0.23.4",
 # ]
 # ///
 """
