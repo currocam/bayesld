@@ -138,7 +138,12 @@ def _parallel_mc(
 
     while len(pi_all) < MAX_REPLICATES:
         seeds = rng.integers(1, 2**32 - 1, size=batch_size)
-        pi_batch, ld_batch = run_batch(seeds)
+        try:
+            pi_batch, ld_batch = run_batch(seeds)
+        except Exception as _e:
+            # `smc(k)` from msprime has right now an unresolved bug
+            # https://github.com/tskit-dev/msprime/pull/2524
+            continue
         pi_all.extend(pi_batch)
         ld_all.extend(ld_batch)
 
