@@ -8,7 +8,7 @@
 """
 SBC collect — merges all batches for one (model, prior) into a single pkl.
 
-Batch pkls supply num_draws, datasets, metadata, and a model-specific "prior" dict.
+Batch pkls supply draw arrays, datasets, metadata, and a model-specific "prior" dict.
 Uncorrected/corrected pkls supply idatas lists.
 All three lists must be provided in matching batch order (sort by filename).
 
@@ -50,24 +50,37 @@ def main():
     )
 
     result = {
-        "num_draws": np.concatenate([b["num_draws"] for b in batches]),
         "datasets": [ds for b in batches for ds in b["datasets"]],
         "idatas_uncorrected": [idata for u in uncorrected for idata in u["idatas"]],
         "idatas_corrected": [idata for c in corrected for idata in c["idatas"]],
-        # metadata from first batch (identical across batches)
-        "left_bins": batches[0]["left_bins"],
-        "right_bins": batches[0]["right_bins"],
-        "mutation_rate": batches[0]["mutation_rate"],
-        "recombination_rate": batches[0]["recombination_rate"],
-        "window_length": batches[0]["window_length"],
-        "sample_size": batches[0]["sample_size"],
-        "prior": batches[0]["prior"],
     }
+
+    # Dynamically collect remaining keys from the first batch
+    first_batch = batches[0]
+    for key in first_batch:
+        if key in result:
+            continue  # already handled above
+
+        first_val = first_batch[key]
+        if isinstance(first_val, list):
+            # flatten across batches
+            result[key] = [item for b in batches for item in b[key]]
+        elif isinstance(first_val, np.ndarray):
+            # concatenate across batches (e.g. ne_draws, ne1_draws, t0_draws)
+            result[key] = np.concatenate([b[key] for b in batches])
+        else:
+            # metadata — assert identical across batches
+            for b in batches[1:]:
+                if b[key] != first_val:
+                    raise ValueError(
+                        f"Mismatch in batch metadata key '{key}' across batches"
+                    )
+            result[key] = first_val
 
     with open(args.output, "wb") as f:
         pickle.dump(result, f)
 
-    n = len(result["num_draws"])
+    n = len(result["datasets"])
     print(
         f"Collected {len(batches)} batches → {n} datasets → {args.output}",
         file=sys.stderr,
