@@ -114,7 +114,7 @@ def _(
             recombination_rate,
             window_length,
             sample_size,
-            random_seed=42,
+            random_seed=372189,
             num_replicates=num_windows,
             ploidy=2,
             num_workers=8,
@@ -201,10 +201,10 @@ def _(mo, model):
     mo.stop(model is None)
     with mo.status.spinner("Active learning (bias correction)..."):
         model.active_learn_bias(
-            n_points_per_iter=5*3,
-            n_iter=5*3,
-            max_tolerance=0.1,
+            n_points_per_iter=2,
+            n_iter=50,
             strategy="pathfinder",
+            # model="hudson",
             seed=41,
         )
     n_pts = len(model.synthetic_points)

@@ -48,9 +48,15 @@ def main():
     args = parser.parse_args()
 
     rng = np.random.default_rng(args.seed)
-    ne1_draws = rng.lognormal(mean=np.log(args.prior_ne1), sigma=args.prior_sigma_ne, size=args.batch_size)
-    ne2_draws = rng.lognormal(mean=np.log(args.prior_ne2), sigma=args.prior_sigma_ne, size=args.batch_size)
-    t0_draws = rng.lognormal(mean=np.log(args.prior_t0), sigma=args.prior_sigma_t0, size=args.batch_size)
+    ne1_draws = rng.lognormal(
+        mean=np.log(args.prior_ne1), sigma=args.prior_sigma_ne, size=args.batch_size
+    )
+    ne2_draws = rng.lognormal(
+        mean=np.log(args.prior_ne2), sigma=args.prior_sigma_ne, size=args.batch_size
+    )
+    t0_draws = rng.lognormal(
+        mean=np.log(args.prior_t0), sigma=args.prior_sigma_t0, size=args.batch_size
+    )
 
     left_bins, right_bins = linear_bins()
     window_length = right_bins[-1] * 2 / RECOMBINATION_RATE

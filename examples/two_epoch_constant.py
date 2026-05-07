@@ -196,8 +196,8 @@ def _(mo, model):
     mo.stop(model is None)
     with mo.status.spinner("Active learning (bias correction)..."):
         model.active_learn_bias(
-            n_points_per_iter=5*3,
-            n_iter=5*3,
+            n_points_per_iter=5 * 3,
+            n_iter=5 * 3,
             max_tolerance=0.1,
             strategy="pathfinder",
             seed=41,
