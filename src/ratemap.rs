@@ -81,7 +81,8 @@ impl RateMap {
         assert!(
             x_bp >= self.position_bp[0]
                 && x_bp <= *self.position_bp.last().expect("position_bp is non-empty"),
-            "x_bp={} out of range [{}, {}]",
+            "position {} bp is outside the rate map range [{}, {}] bp — \
+             make sure the rate map covers the full genomic window passed to data_from_vcf",
             x_bp,
             self.position_bp[0],
             self.position_bp.last().expect("position_bp is non-empty")
@@ -140,8 +141,7 @@ mod tests {
             .prop_map(|(spans, rates)| {
                 let mut position_bp = vec![0.0];
                 for s in &spans {
-                    position_bp
-                        .push(position_bp.last().expect("position_bp is non-empty") + s);
+                    position_bp.push(position_bp.last().expect("position_bp is non-empty") + s);
                 }
                 RateMap::build(position_bp, rates).expect("generated rate map must be valid")
             })
@@ -238,7 +238,8 @@ mod tests {
     #[test]
     fn test_two_intervals() {
         // [0, 100) rate=1e-8, [100, 200] rate=2e-8
-        let map = RateMap::build(vec![0.0, 100.0, 200.0], vec![1e-8, 2e-8]).expect("valid rate map");
+        let map =
+            RateMap::build(vec![0.0, 100.0, 200.0], vec![1e-8, 2e-8]).expect("valid rate map");
 
         // Within first interval
         assert!((map.genetic_distance_morgan(0.0, 50.0) - 50.0 * 1e-8).abs() < 1e-15);
@@ -255,11 +256,8 @@ mod tests {
     #[test]
     fn test_nan_middle() {
         // [0, 100) rate=1e-8, [100, 200) rate=NaN, [200, 300] rate=2e-8
-        let map = RateMap::build(
-            vec![0.0, 100.0, 200.0, 300.0],
-            vec![1e-8, f64::NAN, 2e-8],
-        )
-        .expect("valid rate map");
+        let map = RateMap::build(vec![0.0, 100.0, 200.0, 300.0], vec![1e-8, f64::NAN, 2e-8])
+            .expect("valid rate map");
 
         // Within first interval: valid
         assert!(!map.genetic_distance_morgan(10.0, 50.0).is_nan());

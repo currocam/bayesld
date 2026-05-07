@@ -1,4 +1,4 @@
-use bayesld::{linkage_disequilibrium, Ploidy, SiteStatistics};
+use bayesld::{Ploidy, SiteStatistics, linkage_disequilibrium};
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rand::Rng;
 
