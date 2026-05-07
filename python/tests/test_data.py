@@ -140,8 +140,10 @@ def test_binned_ld_random():
     rate = 1.0
     seq_len = float(region_span + 1)
     streaming = bayesld.StreamingStatsDiploid(
-        left_bins, right_bins,
-        [0.0, seq_len], [rate],
+        left_bins,
+        right_bins,
+        [0.0, seq_len],
+        [rate],
     )
     streaming.add_batch(genotypes, positions, region_span)
     streaming_results = streaming.finalize()
@@ -178,6 +180,184 @@ def test_binned_ld_random():
         assert np.isclose(avg_ld[k_bin], streaming_ld[k_bin], rtol=1e-3), (
             f"Bin {k_bin} LD mismatch: {avg_ld[k_bin]} vs {streaming_ld[k_bin]}"
         )
+
+
+def test_callable_windows_float_rate():
+    """Float rate → single window covering [start_bp, end_bp]."""
+    from bayesld import _callable_windows
+
+    assert _callable_windows(1e-8, 0, 1_000_000) == [(0, 1_000_000)]
+    assert _callable_windows(1e-8, 500, 2000) == [(500, 2000)]
+
+
+def test_callable_windows_no_missing():
+    """RateMap with no missing intervals → single window."""
+    import msprime
+    from bayesld import _callable_windows
+
+    rate_map = msprime.RateMap(position=[0, 1_000_000], rate=[1e-8])
+    assert _callable_windows(rate_map, 0, 1_000_000) == [(0, 1_000_000)]
+
+
+def test_callable_windows_missing_in_middle():
+    """Masked interval in the middle splits the window into two."""
+    import msprime
+    from bayesld import _callable_windows
+
+    # Callable: [0, 300_000) and [700_000, 1_000_000); masked: [300_000, 700_000)
+    rate_map = msprime.RateMap(
+        position=[0, 300_000, 700_000, 1_000_000],
+        rate=[1e-8, float("nan"), 1e-8],
+    )
+    result = _callable_windows(rate_map, 0, 1_000_000)
+    assert result == [(0, 300_000), (700_000, 1_000_000)]
+
+
+def test_callable_windows_missing_at_edges():
+    """Masked intervals at start and end leave only the middle callable."""
+    import msprime
+    from bayesld import _callable_windows
+
+    rate_map = msprime.RateMap(
+        position=[0, 100_000, 900_000, 1_000_000],
+        rate=[float("nan"), 1e-8, float("nan")],
+    )
+    result = _callable_windows(rate_map, 0, 1_000_000)
+    assert result == [(100_000, 900_000)]
+
+
+def test_callable_windows_query_window_clips_missing():
+    """[start_bp, end_bp] window clips the masked intervals correctly."""
+    import msprime
+    from bayesld import _callable_windows
+
+    # Full map has masked [400_000, 600_000), but we only query [200_000, 500_000)
+    rate_map = msprime.RateMap(
+        position=[0, 400_000, 600_000, 1_000_000],
+        rate=[1e-8, float("nan"), 1e-8],
+    )
+    result = _callable_windows(rate_map, 200_000, 500_000)
+    assert result == [(200_000, 400_000)]
+
+
+def test_callable_windows_multiple_gaps():
+    """Multiple masked intervals produce multiple callable windows."""
+    import msprime
+    from bayesld import _callable_windows
+
+    rate_map = msprime.RateMap(
+        position=[0, 100, 200, 300, 400, 500],
+        rate=[1e-8, float("nan"), 1e-8, float("nan"), 1e-8],
+    )
+    result = _callable_windows(rate_map, 0, 500)
+    assert result == [(0, 100), (200, 300), (400, 500)]
+
+
+def test_vcf_matches_tree_sequence(tmp_path):
+    """
+    Integration test: data_from_vcf should match data_from_tree_sequence
+    when both operate on the same data (tree sequence converted to BCF).
+    """
+    import subprocess
+
+    trees_path = tmp_path / "ancestry.trees"
+    mut_path = tmp_path / "mutated.trees"
+    bcf_path = tmp_path / "example.bcf"
+
+    seq_len = int(2e7)
+    recombination_rate = 1e-8
+    mutation_rate = 1e-8
+    n_samples = 10
+    Ne = 1000
+
+    subprocess.run(
+        [
+            "uv",
+            "run",
+            "msp",
+            "ancestry",
+            str(n_samples),
+            "--population-size",
+            str(Ne),
+            "--length",
+            str(seq_len),
+            "--recombination-rate",
+            str(recombination_rate),
+            "--random-seed",
+            "42",
+            "-o",
+            str(trees_path),
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "uv",
+            "run",
+            "msp",
+            "mutations",
+            str(mutation_rate),
+            str(trees_path),
+            "--random-seed",
+            "42",
+            "-o",
+            str(mut_path),
+        ],
+        check=True,
+    )
+    # tskit vcf | bcftools view -O b > example.bcf
+    tskit_proc = subprocess.Popen(
+        ["uv", "run", "tskit", "vcf", str(mut_path)],
+        stdout=subprocess.PIPE,
+    )
+    with open(bcf_path, "wb") as bcf_out:
+        subprocess.run(
+            ["bcftools", "view", "-O", "b"],
+            stdin=tskit_proc.stdout,
+            stdout=bcf_out,
+            check=True,
+        )
+    tskit_proc.wait()
+    subprocess.run(["bcftools", "index", str(bcf_path)], check=True)
+
+    import tskit as tsk
+
+    ts = tsk.load(str(mut_path))
+    left_bins, right_bins = bayesld.linear_bins()
+
+    expected = bayesld.data_from_tree_sequence(
+        ts,
+        recombination_rate=recombination_rate,
+        left_bins_morgan=left_bins,
+        right_bins_morgan=right_bins,
+    )
+    result = bayesld.data_from_vcf(
+        vcf_path=str(bcf_path),
+        recombination_rate=recombination_rate,
+        left_bins_morgan=left_bins,
+        right_bins_morgan=right_bins,
+        contig="1",
+        start_bp=0,
+        end_bp=seq_len,
+    )
+
+    assert result["sample_size"] == expected["sample_size"]
+    assert np.isclose(
+        result["mean_genetic_diversity"],
+        expected["mean_genetic_diversity"],
+        rtol=1e-4,
+    ), (
+        f"pi mismatch: {result['mean_genetic_diversity']} vs {expected['mean_genetic_diversity']}"
+    )
+    np.testing.assert_allclose(
+        result["num_pairs_linkage_disequilibrium"],
+        expected["num_pairs_linkage_disequilibrium"],
+    )
+    np.testing.assert_allclose(
+        result["mean_linkage_disequilibrium"],
+        expected["mean_linkage_disequilibrium"],
+        rtol=1e-4,
+    )
 
 
 def test_msprime():

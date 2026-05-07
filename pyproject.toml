@@ -30,6 +30,9 @@ dependencies = [
     "tqdm>=4.67.1",
     "tskit>=0.5.7",
 ]
+[project.scripts]
+vcfbayesld = "bayesld._cli:main"
+
 [project.optional-dependencies]
 tests = [
     "pytest",

@@ -265,15 +265,14 @@ impl StreamingStats {
 
     fn add_site(&mut self, position: i32, genotypes: &[i32]) {
         let position_bp = position as u64;
-        if !self.ploidy.are_valid_genotypes(genotypes) {
-            return;
-        }
-
-        // Sites in NaN (masked) regions are skipped entirely — no diversity, no LD
         let genetic_pos = self.rate_map.genetic_position_morgan(position_bp as f64);
-        if genetic_pos.is_nan() {
-            return;
-        }
+        // We should never have NaN genetic positions; if we do, it means the rate map is invalid
+        // at this position, so we should panic.
+        assert!(
+            !genetic_pos.is_nan(),
+            "genetic position is NaN at position {} (rate map is invalid at this position)",
+            position
+        );
 
         let site = match self.ploidy {
             Ploidy::Haploid => SiteStatistics::from_haploid(genotypes),
@@ -281,6 +280,8 @@ impl StreamingStats {
         };
         self.genetic_diversity.update(site.genetic_diversity);
 
+        // We do not consider sites with minor allele frequency below the threshold
+        // for the LD calculation.
         if site.minor_allele_frequency < self.maf_threshold {
             return;
         }
@@ -378,18 +379,21 @@ impl StreamingStats {
         }
 
         // Add sites from this batch, counting only those outside NaN regions
-        let mut n_valid_sites = 0u64;
+        let mut n_valid_sites: u64 = shape[0] as u64;
         for i in 0..shape[0] {
             let position = positions[i];
-            let gp = self.rate_map.genetic_position_morgan(position as f64);
-            if !gp.is_nan() {
-                n_valid_sites += 1;
+            // We don't check for NaN here, we trust the python caller to have already
+            // filtered out NaN positions. We panic inside add_site otherwise.
+            let genotypes: Vec<i32> = genotypes.row(i).to_vec();
+
+            if self.ploidy.are_valid_genotypes(&genotypes) {
+                self.add_site(position, &genotypes)
+            } else {
+                n_valid_sites -= 1;
             }
-            let row: Vec<i32> = genotypes.row(i).to_vec();
-            self.add_site(position, &row);
         }
 
-        // Account for HOMREF positions: region_span is non-NaN bp, subtract observed non-NaN sites
+        // VCF do not normally contain HOMREF but we need to account for them!
         let num_homref = region_span - n_valid_sites as f64 + 1.0;
         assert!(
             num_homref.is_finite() && num_homref >= 0.0,
