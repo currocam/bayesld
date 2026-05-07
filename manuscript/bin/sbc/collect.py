@@ -9,14 +9,15 @@
 SBC collect — merges all batches for one (model, prior) into a single pkl.
 
 Batch pkls supply draw arrays, datasets, metadata, and a model-specific "prior" dict.
-Uncorrected/corrected pkls supply idatas lists.
-All three lists must be provided in matching batch order (sort by filename).
+Uncorrected/corrected/no-bias pkls supply idatas lists.
+All lists must be provided in matching batch order (sort by filename).
 
 Usage:
     collect.py <output.pkl>
                --batches     batch_0.pkl batch_1.pkl ...
                --uncorrected unc_0.pkl   unc_1.pkl   ...
                --corrected   corr_0.pkl  corr_1.pkl  ...
+               --no-bias     nb_0.pkl    nb_1.pkl    ...
 """
 
 import argparse
@@ -39,20 +40,23 @@ def main():
     parser.add_argument("--batches", nargs="+", required=True)
     parser.add_argument("--uncorrected", nargs="+", required=True)
     parser.add_argument("--corrected", nargs="+", required=True)
+    parser.add_argument("--no-bias", nargs="+", required=True)
     args = parser.parse_args()
 
     batches = [load(p) for p in sorted(args.batches)]
     uncorrected = [load(p) for p in sorted(args.uncorrected)]
     corrected = [load(p) for p in sorted(args.corrected)]
+    no_bias = [load(p) for p in sorted(args.no_bias)]
 
-    assert len(batches) == len(uncorrected) == len(corrected), (
-        "Mismatch in number of batch / uncorrected / corrected files"
+    assert len(batches) == len(uncorrected) == len(corrected) == len(no_bias), (
+        "Mismatch in number of batch / uncorrected / corrected / no-bias files"
     )
 
     result = {
         "datasets": [ds for b in batches for ds in b["datasets"]],
         "idatas_uncorrected": [idata for u in uncorrected for idata in u["idatas"]],
         "idatas_corrected": [idata for c in corrected for idata in c["idatas"]],
+        "idatas_no_bias": [idata for n in no_bias for idata in n["idatas"]],
     }
 
     # Dynamically collect remaining keys from the first batch

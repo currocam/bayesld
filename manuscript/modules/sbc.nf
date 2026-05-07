@@ -58,13 +58,31 @@ process SBC_CONSTANT_INFER_CORRECTED {
     """
 }
 
+process SBC_CONSTANT_INFER_NO_BIAS {
+    label 'inference'
+
+    input:
+    tuple val(experiment), val(batch_idx), path(batch_pkl)
+
+    output:
+    tuple val(experiment.name), path("nobias_${experiment.name}_${batch_idx}.pkl")
+
+    script:
+    """
+    ${projectDir}/bin/sbc/constant/infer_assume_no_bias.py \
+        ${projectDir}/bin/sbc/constant/nobias_model.stan \
+        ${batch_pkl} \
+        nobias_${experiment.name}_${batch_idx}.pkl
+    """
+}
+
 process SBC_CONSTANT_COLLECT {
     label 'simulation'
 
     publishDir "${params.sbc_results_dir}/constant", mode: 'copy'
 
     input:
-    tuple val(name), path(batch_pkls), path(uncorrected_pkls), path(corrected_pkls)
+    tuple val(name), path(batch_pkls), path(uncorrected_pkls), path(corrected_pkls), path(nobias_pkls)
 
     output:
     path "${name}.pkl"
@@ -75,7 +93,8 @@ process SBC_CONSTANT_COLLECT {
         ${name}.pkl \
         --batches     ${batch_pkls} \
         --uncorrected ${uncorrected_pkls} \
-        --corrected   ${corrected_pkls}
+        --corrected   ${corrected_pkls} \
+        --no-bias     ${nobias_pkls}
     """
 }
 
@@ -88,12 +107,14 @@ workflow SBC_CONSTANT {
 
     SBC_CONSTANT_INFER_UNCORRECTED(SBC_CONSTANT_SIMULATE.out)
     SBC_CONSTANT_INFER_CORRECTED(SBC_CONSTANT_SIMULATE.out)
+    SBC_CONSTANT_INFER_NO_BIAS(SBC_CONSTANT_SIMULATE.out)
 
     SBC_CONSTANT_COLLECT(
         SBC_CONSTANT_SIMULATE.out
             .map { experiment, idx, pkl -> [experiment.name, pkl] }.groupTuple()
             .join(SBC_CONSTANT_INFER_UNCORRECTED.out.groupTuple())
             .join(SBC_CONSTANT_INFER_CORRECTED.out.groupTuple())
+            .join(SBC_CONSTANT_INFER_NO_BIAS.out.groupTuple())
     )
 
     emit:
@@ -163,13 +184,31 @@ process SBC_PIECEWISE_CONSTANT_INFER_CORRECTED {
     """
 }
 
+process SBC_PIECEWISE_CONSTANT_INFER_NO_BIAS {
+    label 'inference'
+
+    input:
+    tuple val(experiment), val(batch_idx), path(batch_pkl)
+
+    output:
+    tuple val(experiment.name), path("nobias_${experiment.name}_${batch_idx}.pkl")
+
+    script:
+    """
+    ${projectDir}/bin/sbc/piecewise_constant/infer_assume_no_bias.py \
+        ${projectDir}/bin/sbc/piecewise_constant/nobias_model.stan \
+        ${batch_pkl} \
+        nobias_${experiment.name}_${batch_idx}.pkl
+    """
+}
+
 process SBC_PIECEWISE_CONSTANT_COLLECT {
     label 'simulation'
 
     publishDir "${params.sbc_results_dir}/piecewise_constant", mode: 'copy'
 
     input:
-    tuple val(name), path(batch_pkls), path(uncorrected_pkls), path(corrected_pkls)
+    tuple val(name), path(batch_pkls), path(uncorrected_pkls), path(corrected_pkls), path(nobias_pkls)
 
     output:
     path "${name}.pkl"
@@ -180,7 +219,8 @@ process SBC_PIECEWISE_CONSTANT_COLLECT {
         ${name}.pkl \
         --batches     ${batch_pkls} \
         --uncorrected ${uncorrected_pkls} \
-        --corrected   ${corrected_pkls}
+        --corrected   ${corrected_pkls} \
+        --no-bias     ${nobias_pkls}
     """
 }
 
@@ -193,12 +233,14 @@ workflow SBC_PIECEWISE_CONSTANT {
 
     SBC_PIECEWISE_CONSTANT_INFER_UNCORRECTED(SBC_PIECEWISE_CONSTANT_SIMULATE.out)
     SBC_PIECEWISE_CONSTANT_INFER_CORRECTED(SBC_PIECEWISE_CONSTANT_SIMULATE.out)
+    SBC_PIECEWISE_CONSTANT_INFER_NO_BIAS(SBC_PIECEWISE_CONSTANT_SIMULATE.out)
 
     SBC_PIECEWISE_CONSTANT_COLLECT(
         SBC_PIECEWISE_CONSTANT_SIMULATE.out
             .map { experiment, idx, pkl -> [experiment.name, pkl] }.groupTuple()
             .join(SBC_PIECEWISE_CONSTANT_INFER_UNCORRECTED.out.groupTuple())
             .join(SBC_PIECEWISE_CONSTANT_INFER_CORRECTED.out.groupTuple())
+            .join(SBC_PIECEWISE_CONSTANT_INFER_NO_BIAS.out.groupTuple())
     )
 
     emit:
@@ -268,13 +310,31 @@ process SBC_PIECEWISE_EXPONENTIAL_INFER_CORRECTED {
     """
 }
 
+process SBC_PIECEWISE_EXPONENTIAL_INFER_NO_BIAS {
+    label 'inference'
+
+    input:
+    tuple val(experiment), val(batch_idx), path(batch_pkl)
+
+    output:
+    tuple val(experiment.name), path("nobias_${experiment.name}_${batch_idx}.pkl")
+
+    script:
+    """
+    ${projectDir}/bin/sbc/piecewise_exponential/infer_assume_no_bias.py \
+        ${projectDir}/bin/sbc/piecewise_exponential/nobias_model.stan \
+        ${batch_pkl} \
+        nobias_${experiment.name}_${batch_idx}.pkl
+    """
+}
+
 process SBC_PIECEWISE_EXPONENTIAL_COLLECT {
     label 'simulation'
 
     publishDir "${params.sbc_results_dir}/piecewise_exponential", mode: 'copy'
 
     input:
-    tuple val(name), path(batch_pkls), path(uncorrected_pkls), path(corrected_pkls)
+    tuple val(name), path(batch_pkls), path(uncorrected_pkls), path(corrected_pkls), path(nobias_pkls)
 
     output:
     path "${name}.pkl"
@@ -285,7 +345,8 @@ process SBC_PIECEWISE_EXPONENTIAL_COLLECT {
         ${name}.pkl \
         --batches     ${batch_pkls} \
         --uncorrected ${uncorrected_pkls} \
-        --corrected   ${corrected_pkls}
+        --corrected   ${corrected_pkls} \
+        --no-bias     ${nobias_pkls}
     """
 }
 
@@ -298,12 +359,14 @@ workflow SBC_PIECEWISE_EXPONENTIAL {
 
     SBC_PIECEWISE_EXPONENTIAL_INFER_UNCORRECTED(SBC_PIECEWISE_EXPONENTIAL_SIMULATE.out)
     SBC_PIECEWISE_EXPONENTIAL_INFER_CORRECTED(SBC_PIECEWISE_EXPONENTIAL_SIMULATE.out)
+    SBC_PIECEWISE_EXPONENTIAL_INFER_NO_BIAS(SBC_PIECEWISE_EXPONENTIAL_SIMULATE.out)
 
     SBC_PIECEWISE_EXPONENTIAL_COLLECT(
         SBC_PIECEWISE_EXPONENTIAL_SIMULATE.out
             .map { experiment, idx, pkl -> [experiment.name, pkl] }.groupTuple()
             .join(SBC_PIECEWISE_EXPONENTIAL_INFER_UNCORRECTED.out.groupTuple())
             .join(SBC_PIECEWISE_EXPONENTIAL_INFER_CORRECTED.out.groupTuple())
+            .join(SBC_PIECEWISE_EXPONENTIAL_INFER_NO_BIAS.out.groupTuple())
     )
 
     emit:
