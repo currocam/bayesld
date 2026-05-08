@@ -45,6 +45,11 @@ def main():
         help="Generate N linear bins between MIN and MAX Morgan.",
     )
 
+    parser.add_argument(
+        "--samples",
+        metavar="S1,S2,...",
+        help="Comma-separated list of sample names to include.",
+    )
     parser.add_argument("--ploidy", type=int, default=2, choices=[1, 2])
     parser.add_argument("--chunk-size", type=int, default=10_000)
     parser.add_argument(
@@ -81,6 +86,8 @@ def main():
         )
         left_bins, right_bins = bayesld.linear_bins(min_dist, max_dist, n_bins)
 
+    samples = args.samples.split(",") if args.samples else None
+
     result = bayesld.data_from_vcf(
         vcf_path=args.vcf,
         recombination_rate=recombination_rate,
@@ -92,6 +99,7 @@ def main():
         chunk_size=args.chunk_size,
         ploidy=args.ploidy,
         progress_bar=args.progress,
+        samples=samples,
     )
 
     print(

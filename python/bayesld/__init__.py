@@ -194,6 +194,7 @@ def data_from_vcf(
     chunk_size: int = 10_000,
     ploidy: int = 2,
     progress_bar: bool = False,
+    samples: list[str] | None = None,
 ) -> dict:
     """
     Compute linkage disequilibrium and genetic diversity statistics from a VCF/BCF file.
@@ -225,6 +226,8 @@ def data_from_vcf(
         1 or 2. Default 2.
     progress_bar : bool, optional
         Whether to display a progress bar over callable windows. Default False.
+    samples : list[str] or None, optional
+        Subset of sample names to use. If None, all samples are used.
 
     Returns
     -------
@@ -265,7 +268,7 @@ def data_from_vcf(
     else:
         raise ValueError("Ploidy must be 1 or 2")
 
-    vcf = cyvcf2.VCF(vcf_path, gts012=True)
+    vcf = cyvcf2.VCF(vcf_path, gts012=True, samples=samples)
     n_columns = len(vcf.samples)
 
     buffer_geno = np.empty((chunk_size, n_columns), dtype=np.int32)

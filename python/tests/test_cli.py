@@ -221,6 +221,54 @@ def _assert_vcf_matches_ts(ts, bcf_path, recombination_rate):
 
 
 @requires_bcftools
+def test_vcf_samples_subset(tmp_path):
+    """data_from_vcf with samples= returns only the requested samples."""
+    vcf_text = """\
+##fileformat=VCFv4.1
+##contig=<ID=1,length=100000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\tS2\tS3\tS4
+1\t1000\t.\tA\tT\t.\tPASS\t.\tGT\t0/0\t0/1\t1/1\t0/1
+1\t2000\t.\tA\tT\t.\tPASS\t.\tGT\t0/1\t0/1\t0/1\t0/1
+"""
+    vcf_path = tmp_path / "test.vcf"
+    bcf_path = tmp_path / "test.bcf"
+    vcf_path.write_text(vcf_text)
+
+    subprocess.run(
+        ["bcftools", "view", "-O", "b", "-o", str(bcf_path), str(vcf_path)], check=True
+    )
+    subprocess.run(["bcftools", "index", str(bcf_path)], check=True)
+
+    left_bins, right_bins = bayesld.linear_bins()
+
+    # All samples
+    result_all = bayesld.data_from_vcf(
+        vcf_path=str(bcf_path),
+        recombination_rate=1e-8,
+        left_bins_morgan=left_bins,
+        right_bins_morgan=right_bins,
+        contig="1",
+        start_bp=0,
+        end_bp=100_000,
+    )
+    assert result_all["sample_size"] == 4
+
+    # Subset of 2 samples
+    result_sub = bayesld.data_from_vcf(
+        vcf_path=str(bcf_path),
+        recombination_rate=1e-8,
+        left_bins_morgan=left_bins,
+        right_bins_morgan=right_bins,
+        contig="1",
+        start_bp=0,
+        end_bp=100_000,
+        samples=["S1", "S3"],
+    )
+    assert result_sub["sample_size"] == 2
+
+
+@requires_bcftools
 def test_missing_genotypes_do_not_crash(tmp_path):
     """
     Variants with missing genotypes (gt_types==3) are handled by Rust without crashing.
@@ -257,6 +305,72 @@ def test_missing_genotypes_do_not_crash(tmp_path):
 
     assert result["sample_size"] == 4
     assert result["num_sites_genetic_diversity"] > 0
+
+
+@pytest.mark.slow
+@requires_bcftools
+def test_vcf_matches_tree_sequence_haploid(tmp_path):
+    """Haploid data: data_from_vcf matches data_from_tree_sequence with ploidy=1."""
+    import msprime
+    import tskit as tsk
+
+    recombination_rate = 1e-8
+    ts = msprime.sim_ancestry(
+        N_SAMPLES,
+        population_size=NE,
+        sequence_length=SEQ_LEN,
+        recombination_rate=recombination_rate,
+        ploidy=1,
+        random_seed=42,
+    )
+    ts = msprime.sim_mutations(ts, rate=MUTATION_RATE, random_seed=42)
+
+    # Write to VCF and convert to BCF
+    vcf_path = tmp_path / "haploid.vcf"
+    bcf_path = tmp_path / "haploid.bcf"
+    with open(vcf_path, "w") as f:
+        ts.write_vcf(f)
+
+    subprocess.run(
+        ["bcftools", "view", "-O", "b", "-o", str(bcf_path), str(vcf_path)], check=True
+    )
+    subprocess.run(["bcftools", "index", str(bcf_path)], check=True)
+
+    left_bins, right_bins = bayesld.linear_bins()
+
+    expected = bayesld.data_from_tree_sequence(
+        ts,
+        recombination_rate=recombination_rate,
+        left_bins_morgan=left_bins,
+        right_bins_morgan=right_bins,
+        ploidy=1,
+    )
+    result = bayesld.data_from_vcf(
+        vcf_path=str(bcf_path),
+        recombination_rate=recombination_rate,
+        left_bins_morgan=left_bins,
+        right_bins_morgan=right_bins,
+        contig="1",
+        start_bp=0,
+        end_bp=int(ts.sequence_length),
+        ploidy=1,
+    )
+
+    assert result["sample_size"] == expected["sample_size"]
+    assert np.isclose(
+        result["mean_genetic_diversity"],
+        expected["mean_genetic_diversity"],
+        rtol=1e-4,
+    )
+    np.testing.assert_allclose(
+        result["num_pairs_linkage_disequilibrium"],
+        expected["num_pairs_linkage_disequilibrium"],
+    )
+    np.testing.assert_allclose(
+        result["mean_linkage_disequilibrium"],
+        expected["mean_linkage_disequilibrium"],
+        rtol=1e-4,
+    )
 
 
 @pytest.mark.slow
