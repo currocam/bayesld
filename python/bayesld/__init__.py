@@ -238,8 +238,12 @@ def data_from_vcf(
 
     # Build rate map arrays
     if isinstance(recombination_rate, (int, float)):
-        map_position_bp = [float(start_bp), float(end_bp)]
-        map_rate = [float(recombination_rate)]
+        if start_bp > 0:
+            map_position_bp = [0.0, float(start_bp), float(end_bp)]
+            map_rate = [float("nan"), float(recombination_rate)]
+        else:
+            map_position_bp = [0.0, float(end_bp)]
+            map_rate = [float(recombination_rate)]
     else:
         map_position_bp = list(recombination_rate.position)
         map_rate = list(recombination_rate.rate)

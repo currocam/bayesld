@@ -17,6 +17,7 @@ requires_bcftools = pytest.mark.skipif(
 
 # --- CLI argument validation tests (fast, no bcftools needed) ---
 
+
 def _run_cli(*args):
     """Run vcfbayesld via uv and return the CompletedProcess."""
     return subprocess.run(
@@ -35,13 +36,22 @@ def test_cli_missing_required_args():
 def test_cli_both_rate_and_hapmap_are_mutually_exclusive():
     """Exits non-zero when both --recombination-rate and --hapmap are given."""
     result = _run_cli(
-        "--vcf", "x.bcf",
-        "--contig", "chr1",
-        "--start", "0",
-        "--end", "1000",
-        "--recombination-rate", "1e-8",
-        "--hapmap", "map.txt",
-        "--linear-bins", "0.005", "0.1", "19",
+        "--vcf",
+        "x.bcf",
+        "--contig",
+        "chr1",
+        "--start",
+        "0",
+        "--end",
+        "1000",
+        "--recombination-rate",
+        "1e-8",
+        "--hapmap",
+        "map.txt",
+        "--linear-bins",
+        "0.005",
+        "0.1",
+        "19",
     )
     assert result.returncode != 0
 
@@ -49,11 +59,18 @@ def test_cli_both_rate_and_hapmap_are_mutually_exclusive():
 def test_cli_neither_rate_nor_hapmap():
     """Exits non-zero when neither --recombination-rate nor --hapmap is given."""
     result = _run_cli(
-        "--vcf", "x.bcf",
-        "--contig", "chr1",
-        "--start", "0",
-        "--end", "1000",
-        "--linear-bins", "0.005", "0.1", "19",
+        "--vcf",
+        "x.bcf",
+        "--contig",
+        "chr1",
+        "--start",
+        "0",
+        "--end",
+        "1000",
+        "--linear-bins",
+        "0.005",
+        "0.1",
+        "19",
     )
     assert result.returncode != 0
 
@@ -61,11 +78,16 @@ def test_cli_neither_rate_nor_hapmap():
 def test_cli_neither_bins_nor_linear_bins():
     """Exits non-zero when neither --bins nor --linear-bins is given."""
     result = _run_cli(
-        "--vcf", "x.bcf",
-        "--contig", "chr1",
-        "--start", "0",
-        "--end", "1000",
-        "--recombination-rate", "1e-8",
+        "--vcf",
+        "x.bcf",
+        "--contig",
+        "chr1",
+        "--start",
+        "0",
+        "--end",
+        "1000",
+        "--recombination-rate",
+        "1e-8",
     )
     assert result.returncode != 0
 
@@ -73,13 +95,22 @@ def test_cli_neither_bins_nor_linear_bins():
 def test_cli_invalid_ploidy():
     """Exits non-zero for unsupported ploidy value."""
     result = _run_cli(
-        "--vcf", "x.bcf",
-        "--contig", "chr1",
-        "--start", "0",
-        "--end", "1000",
-        "--recombination-rate", "1e-8",
-        "--linear-bins", "0.005", "0.1", "19",
-        "--ploidy", "3",
+        "--vcf",
+        "x.bcf",
+        "--contig",
+        "chr1",
+        "--start",
+        "0",
+        "--end",
+        "1000",
+        "--recombination-rate",
+        "1e-8",
+        "--linear-bins",
+        "0.005",
+        "0.1",
+        "19",
+        "--ploidy",
+        "3",
     )
     assert result.returncode != 0
 
@@ -208,7 +239,9 @@ def test_missing_genotypes_do_not_crash(tmp_path):
     bcf_path = tmp_path / "test.bcf"
     vcf_path.write_text(vcf_text)
 
-    subprocess.run(["bcftools", "view", "-O", "b", "-o", str(bcf_path), str(vcf_path)], check=True)
+    subprocess.run(
+        ["bcftools", "view", "-O", "b", "-o", str(bcf_path), str(vcf_path)], check=True
+    )
     subprocess.run(["bcftools", "index", str(bcf_path)], check=True)
 
     left_bins, right_bins = bayesld.linear_bins()
@@ -238,6 +271,57 @@ def test_vcf_matches_tree_sequence_flat_rate(tmp_path):
     )
     ts = tsk.load(str(mut_path))
     _assert_vcf_matches_ts(ts, bcf_path, recombination_rate)
+
+
+@pytest.mark.slow
+@requires_bcftools
+def test_vcf_flat_rate_nonzero_start(tmp_path):
+    """Flat rate with start > 0: data_from_vcf matches data_from_tree_sequence on the same interval."""
+    import tskit as tsk
+
+    recombination_rate = 1e-8
+    start_bp = SEQ_LEN // 4
+    end_bp = SEQ_LEN // 2
+
+    mut_path, bcf_path = _build_bcf(
+        tmp_path, ["--recombination-rate", str(recombination_rate)]
+    )
+    ts = tsk.load(str(mut_path))
+    ts_trimmed = ts.keep_intervals([[start_bp, end_bp]])
+
+    left_bins, right_bins = bayesld.linear_bins()
+
+    expected = bayesld.data_from_tree_sequence(
+        ts_trimmed,
+        recombination_rate=recombination_rate,
+        left_bins_morgan=left_bins,
+        right_bins_morgan=right_bins,
+    )
+    result = bayesld.data_from_vcf(
+        vcf_path=str(bcf_path),
+        recombination_rate=recombination_rate,
+        left_bins_morgan=left_bins,
+        right_bins_morgan=right_bins,
+        contig="1",
+        start_bp=start_bp,
+        end_bp=end_bp,
+    )
+
+    assert result["sample_size"] == expected["sample_size"]
+    assert np.isclose(
+        result["mean_genetic_diversity"],
+        expected["mean_genetic_diversity"],
+        rtol=1e-4,
+    )
+    np.testing.assert_allclose(
+        result["num_pairs_linkage_disequilibrium"],
+        expected["num_pairs_linkage_disequilibrium"],
+    )
+    np.testing.assert_allclose(
+        result["mean_linkage_disequilibrium"],
+        expected["mean_linkage_disequilibrium"],
+        rtol=1e-4,
+    )
 
 
 @pytest.mark.slow
