@@ -3,7 +3,7 @@ nextflow.enable.dsl = 2
 include { CONCEPTUAL_DATA; CONCEPTUAL_PLOTS } from './modules/conceptual'
 include { EXAMPLE_BIAS_DATA; EXAMPLE_BIAS_PLOT } from './modules/example_bias'
 include { HOLSTEINFRIESIAN_DATA; VAQUITA_DATA; CANISFAMILIARIS_DATA; STDPOPSIM_PLOTS } from './modules/stdpopsim'
-include { SBC_CONSTANT; SBC_PIECEWISE_CONSTANT; SBC_PIECEWISE_EXPONENTIAL } from './modules/sbc'
+include { SBC_CONSTANT; SBC_PIECEWISE_CONSTANT; SBC_PIECEWISE_EXPONENTIAL; SBC_PLOT } from './modules/sbc'
 
 workflow {
     data_ch = CONCEPTUAL_DATA()
@@ -17,7 +17,14 @@ workflow {
     canisfamiliaris_ch = CANISFAMILIARIS_DATA()
     STDPOPSIM_PLOTS(holsteinfriesian_ch, vaquita_ch, canisfamiliaris_ch)
 
-    SBC_CONSTANT()
-    SBC_PIECEWISE_CONSTANT()
-    SBC_PIECEWISE_EXPONENTIAL()
+    sbc_constant_ch = SBC_CONSTANT()
+    sbc_pc_ch = SBC_PIECEWISE_CONSTANT()
+    sbc_pe_ch = SBC_PIECEWISE_EXPONENTIAL()
+
+    SBC_PLOT(
+        sbc_constant_ch.results
+            .mix(sbc_pc_ch.results)
+            .mix(sbc_pe_ch.results)
+            .flatten()
+    )
 }

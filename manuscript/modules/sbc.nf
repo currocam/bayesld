@@ -121,6 +121,23 @@ workflow SBC_CONSTANT {
     results = SBC_CONSTANT_COLLECT.out
 }
 
+process SBC_PLOT {
+    label 'plotting'
+
+    publishDir "${params.figures_dir}/sbc", mode: 'copy'
+
+    input:
+    path pkl
+
+    output:
+    path "*.pdf"
+
+    script:
+    """
+    sbc_plot.py --pkl ${pkl}
+    """
+}
+
 // ── Piecewise Constant (2-epoch) ────────────────────────────────────────────
 
 process SBC_PIECEWISE_CONSTANT_SIMULATE {
