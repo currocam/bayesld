@@ -1,2 +1,7 @@
 work
 .nextflow*
+# Ignore binaries
+bin/sbc/constant/nobias_model
+bin/sbc/piecewise_constant/nobias_model
+bin/sbc/piecewise_exponential/nobias_model
+results
