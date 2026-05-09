@@ -770,8 +770,10 @@ def _(Path, az, carrying_model, msprime, pickle):
 
 
 @app.cell
-def _(az, carrying_model):
-    az.summary(carrying_model.sample())
+def _(carrying_model):
+    idata_carrying_base2 = carrying_model.sample(
+        iter_warmup=10_000, iter_sampling=10_000, adapt_delta=0.99
+    )
     return
 
 
