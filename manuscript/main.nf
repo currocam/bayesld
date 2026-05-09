@@ -4,6 +4,7 @@ include { CONCEPTUAL_DATA; CONCEPTUAL_PLOTS } from './modules/conceptual'
 include { EXAMPLE_BIAS_DATA; EXAMPLE_BIAS_PLOT } from './modules/example_bias'
 include { HOLSTEINFRIESIAN_DATA; VAQUITA_DATA; CANISFAMILIARIS_DATA; STDPOPSIM_PLOTS } from './modules/stdpopsim'
 include { SBC_CONSTANT; SBC_PIECEWISE_CONSTANT; SBC_PIECEWISE_EXPONENTIAL; SBC_PLOT } from './modules/sbc'
+include { LIZARDS } from './modules/lizards'
 
 workflow {
     data_ch = CONCEPTUAL_DATA()

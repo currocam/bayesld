@@ -18,6 +18,8 @@ process GONE2_COMPILE {
 process GONE2_RUN {
     label 'gone'
 
+    publishDir "${params.lizards_dir}/gone", mode: 'copy'
+
     input:
     path gone2
     tuple val(name), path(vcf_gz), val(rec_rate), val(samples)
@@ -33,7 +35,7 @@ process GONE2_RUN {
 
     # Run GONE2
     chmod +x ${gone2}
-    ./${gone2} -S 25376 -g 0 -r ${rec_rate} -o ${name} ${name}.vcf
+    ./${gone2} -S 25376 -g 0 -r ${rec_rate} -t ${task.cpus} -o ${name} ${name}.vcf
 
     # Clean up temporary VCF
     rm ${name}.vcf
