@@ -12,7 +12,7 @@ workflow LIZARDS {
     gone2 = GONE2_COMPILE()
 
     gone_input = Channel.of(
-        ["psiculus", file(params.lizards_vcf), params.lizards_rec_rate, params.PM_SAMPLES]
+        ["psiculus", file(params.lizards_vcf), params.lizards_rec_rate, params.PM_SAMPLES, true]
     )
 
     GONE2_RUN(gone2, gone_input)
