@@ -32,16 +32,18 @@ process GONE2_RUN {
     def max_loci = 1999999
     """
     if [ "${subsample}" = "true" ]; then
-        # Header
-        bcftools view ${samples_arg} -h ${vcf_gz} > ${name}.unsorted.vcf
-        # Random subsample of ${max_loci} SNPs (https://www.biostars.org/p/9550551/)
-        bcftools view ${samples_arg} -H ${vcf_gz} \
-            | awk 'BEGIN{srand(25376)} {printf("%f\\t%s\\n",rand(),\$0)}' \
-            | (sort -t \$'\\t' -T . -k1,1g || true) \
-            | head -n ${max_loci} \
-            | cut -f 2- >> ${name}.unsorted.vcf
-        bcftools sort -o ${name}.vcf ${name}.unsorted.vcf
-        rm ${name}.unsorted.vcf
+        # Count total SNPs
+        n_total=\$(bcftools view ${samples_arg} -H ${vcf_gz} | wc -l)
+        if [ "\${n_total}" -le "${max_loci}" ]; then
+            # No subsampling needed
+            bcftools view ${samples_arg} ${vcf_gz} -O v -o ${name}.vcf
+        else
+            # Retain each SNP with probability max_loci/n_total (single pass, already sorted)
+            bcftools view ${samples_arg} ${vcf_gz} \
+                | awk -v n_total="\${n_total}" -v max_loci="${max_loci}" \
+                    'BEGIN{srand(25376); p=max_loci/n_total; k=0} /^#/{print; next} k < max_loci && rand() < p {print; k++} END{print k" SNPs retained out of "n_total > "/dev/stderr"}' \
+                > ${name}.vcf
+        fi
     else
         bcftools view ${samples_arg} ${vcf_gz} -O v -o ${name}.vcf
     fi
