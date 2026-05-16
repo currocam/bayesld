@@ -65,7 +65,7 @@ process GONE2_RUN {
     tuple val(name), path(vcf), val(rec_rate)
 
     output:
-    tuple val(name), path("${name}_GONE_Ne"), path("${name}_GONE_d2"), path("${name}_GONE_STATS")
+    tuple val(name), path("${name}_GONE2_Ne"), path("${name}_GONE2_d2"), path("${name}_GONE2_STATS")
 
     script:
     """
