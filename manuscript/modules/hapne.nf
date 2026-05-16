@@ -46,7 +46,7 @@ process HAPNE_VCF {
     def samples_arg = samples ? "--samples ${samples}" : ""
     """
     bcftools view ${samples_arg} -t ${chrom} ${vcf_gz} -O z -o ${chrom}.vcf.gz
-    bcftools index ${chrom}.vcf.gz
+    bcftools index --tbi ${chrom}.vcf.gz
     """
 }
 
