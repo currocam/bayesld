@@ -32,3 +32,14 @@ process ERROR_CONSTANT_PLOT {
     error_constant_plot.py ${pkl_args}
     """
 }
+
+workflow ERROR_CONSTANT {
+    combos = Channel.of(
+        [1e-8, 100],
+        [1e-8, 10],
+        [1e-9, 100],
+        [1e-9, 10],
+    )
+    pkls = ERROR_CONSTANT_DATA(combos)
+    ERROR_CONSTANT_PLOT(pkls.collect())
+}

@@ -2,7 +2,7 @@ nextflow.enable.dsl = 2
 
 include { CONCEPTUAL_DATA; CONCEPTUAL_PLOTS } from './modules/conceptual'
 include { EXAMPLE_BIAS_DATA; EXAMPLE_BIAS_PLOT } from './modules/example_bias'
-include { ERROR_CONSTANT_DATA; ERROR_CONSTANT_PLOT } from './modules/error_constant'
+include { ERROR_CONSTANT_DATA; ERROR_CONSTANT_PLOT; ERROR_CONSTANT } from './modules/error_constant'
 include { HOLSTEINFRIESIAN_DATA; VAQUITA_DATA; CANISFAMILIARIS_DATA; STDPOPSIM_PLOTS } from './modules/stdpopsim'
 include { SBC_CONSTANT; SBC_PIECEWISE_CONSTANT; SBC_PIECEWISE_EXPONENTIAL; SBC_PLOT } from './modules/sbc'
 include { LIZARDS } from './modules/lizards'
@@ -14,14 +14,7 @@ workflow {
     bias_ch = EXAMPLE_BIAS_DATA()
     EXAMPLE_BIAS_PLOT(bias_ch)
 
-    error_constant_combos = Channel.of(
-        [1e-8, 100],
-        [1e-8, 10],
-        [1e-9, 100],
-        [1e-9, 10],
-    )
-    error_constant_pkls = ERROR_CONSTANT_DATA(error_constant_combos)
-    ERROR_CONSTANT_PLOT(error_constant_pkls.collect())
+    ERROR_CONSTANT()
 
     holsteinfriesian_ch = HOLSTEINFRIESIAN_DATA()
     vaquita_ch = VAQUITA_DATA()
