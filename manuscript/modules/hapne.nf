@@ -63,7 +63,7 @@ process HAPNE_RUN {
     tuple val(name), path("results/ld_hapne_estimate.csv"), path("results/ld_hapne_pop_trajectory.png")
 
     script:
-    def python_deps = "pandas>=2.2.3 pandas-plink>=2.3.1 numba>=0.61.0 scipy>=1.15.2 matplotlib>=3.10.1 scikit-learn>=1.6.1 pyyaml>=6.0.2"
+    def python_deps = "pandas>=2.2.3,pandas-plink>=2.3.1,numba>=0.61.0,scipy>=1.15.2,matplotlib>=3.10.1,scikit-learn>=1.6.1,pyyaml>=6.0.2"
     """
     mkdir data
     ln -s \$(readlink -f ${maps}) data/
