@@ -71,8 +71,17 @@ process HAPNE_RUN {
     git clone https://github.com/currocam/hapne-snakemake
     cd hapne-snakemake
     mkdir data
-    for f in ${maps} ${vcfs}; do
-        ln -s "\${WORKDIR}/\${f}" data/
+    # Symlink only chromosomes whose VCF contains variants
+    for f in ${vcfs}; do
+        case "\${f}" in *.tbi) continue ;; esac
+        if bcftools view -H "\${WORKDIR}/\${f}" | head -1 | grep -q .; then
+            chrom=\$(basename "\${f}" .vcf.gz)
+            ln -s "\${WORKDIR}/\${f}" data/
+            ln -s "\${WORKDIR}/\${f}.tbi" data/
+            ln -s "\${WORKDIR}/\${chrom}.shapeit.map" data/ 2>/dev/null || true
+        else
+            echo "Skipping \$(basename \${f} .vcf.gz): no variants" >&2
+        fi
     done
 
     cat > config.yaml <<EOF
