@@ -48,8 +48,10 @@ workflow LIZARDS {
     HAPNE_RUN(hapne_run_input)
 
     // ── phlash ──
+    def vcf_tbi = file("${params.lizards_vcf}.tbi")
+    def vcf_csi = file("${params.lizards_vcf}.csi")
     phlash_data_ch = PHLASH_DATA(
-        Channel.of(["psiculus", vcf_file, seq_report, params.PM_SAMPLES])
+        Channel.of(["psiculus", vcf_file, vcf_tbi, vcf_csi, seq_report, params.PM_SAMPLES])
     )
     PHLASH_RUN(phlash_data_ch)
 

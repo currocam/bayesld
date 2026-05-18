@@ -5,7 +5,7 @@ process PHLASH_DATA {
     label 'phlash_data'
 
     input:
-    tuple val(name), path(vcf_gz), path(sequence_report), val(samples)
+    tuple val(name), path(vcf_gz), path(vcf_tbi), path(vcf_csi), path(sequence_report), val(samples)
 
     output:
     tuple val(name), path("contigs.pkl")
