@@ -66,12 +66,14 @@ process HAPNE_RUN {
     def python_deps = "pandas>=2.2.3,pandas-plink>=2.3.1,numba>=0.61.0,scipy>=1.15.2,matplotlib>=3.10.1,scikit-learn>=1.6.1,pyyaml>=6.0.2"
     def shadow_dir = "/tmp/vsc21003"
     """
+    WORKDIR=\$(pwd)
+
     git clone https://github.com/currocam/hapne-snakemake
     cd hapne-snakemake
-
     mkdir data
-    ln -s \$(readlink -f ${maps}) data/
-    ln -s \$(readlink -f ${vcfs}) data/
+    for f in ${maps} ${vcfs}; do
+        ln -s "\${WORKDIR}/\${f}" data/
+    done
 
     cat > config.yaml <<EOF
 data_dir: "data/"
@@ -84,6 +86,6 @@ apply_filter: false
 EOF
 
     uvx --with "${python_deps}" snakemake -c ${task.cpus} --configfile config.yaml --shadow-prefix ${shadow_dir}
-    cp -r results ../results
+    cp -r results \${WORKDIR}/results
     """
 }
