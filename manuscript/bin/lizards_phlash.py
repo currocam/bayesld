@@ -1,11 +1,15 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.12"
 # dependencies = [
-#     "phlash[gpu]>=1.0.0,<1.1.0",
-#     "jax<0.6.0",
+#     "ipython",
 #     "numpy",
+#     "pandas",
+#     "phlash[gpu]",
 # ]
+#
+# [tool.uv.sources]
+# phlash = { git = "https://github.com/jthlab/phlash" , rev = "96a6e3f8e01053271e88d21c97862198422d9ae0"}
 # ///
 import pickle
 import sys
