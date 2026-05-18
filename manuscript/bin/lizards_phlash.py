@@ -15,23 +15,49 @@ import pickle
 import sys
 
 import numpy as np
+import pandas as pd
 import phlash
+import phlash.data
+
 
 def main():
-    contigs_path = sys.argv[1]
-    pkl_path = sys.argv[2]
-    npz_path = sys.argv[3]
+    vcf_path = sys.argv[1]
+    sequence_report = sys.argv[2]
+    samples_csv = sys.argv[3]
+    pkl_path = sys.argv[4]
+    npz_path = sys.argv[5]
 
-    with open(contigs_path, "rb") as f:
-        contigs = pickle.load(f)
+    samples = samples_csv.split(",")
+
+    contigs = pd.read_csv(sequence_report, sep="\t")
+    contigs = contigs[
+        contigs["Sequence name"].str.startswith("SUPER")
+        & ~contigs["Sequence name"].str.startswith("SUPER_W")
+        & ~contigs["Sequence name"].str.startswith("SUPER_Z")
+    ]
+    print(f"Found {len(contigs)} contigs to process")
+
+    chroms = []
+    for _, row in contigs.iterrows():
+        contig_name = str(row["GenBank seq accession"])
+        length = int(row["Seq length"])
+        chroms.append(
+            phlash.data.VcfContig(
+                vcf_path,
+                samples=samples,
+                contig=contig_name,
+                interval=(1, length),
+            )
+        )
+        print(f"  {contig_name} ({length:,} bp)")
 
     # From https://academic.oup.com/mbe/article/39/1/msab311/6413643
     generation_time = 2
     mutation_rate_per_year = 1.98e-9
     mutation_rate = mutation_rate_per_year * generation_time
 
-    test_data = contigs[0]
-    train_data = contigs[1:]
+    test_data = chroms[0]
+    train_data = chroms[1:]
     results = phlash.fit(
         data=train_data, test_data=test_data, mutation_rate=mutation_rate
     )
