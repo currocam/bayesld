@@ -1,17 +1,17 @@
 process ERROR_CONSTANT_DATA {
-    label 'simulation'
+    label 'error_constant'
 
-    tag "r=${recombination_rate}_n=${num_samples}"
+    tag "r=${recombination_rate}_n=${num_samples}_p=${ploidy}"
 
     input:
-    tuple val(recombination_rate), val(num_samples)
+    tuple val(recombination_rate), val(num_samples), val(ploidy)
 
     output:
-    path "error_constant_r${recombination_rate}_n${num_samples}.pkl"
+    path "error_constant_r${recombination_rate}_n${num_samples}_p${ploidy}.pkl"
 
     script:
     """
-    error_constant.py ${recombination_rate} ${num_samples} error_constant_r${recombination_rate}_n${num_samples}.pkl
+    error_constant.py ${recombination_rate} ${num_samples} ${ploidy} ${task.cpus} error_constant_r${recombination_rate}_n${num_samples}_p${ploidy}.pkl
     """
 }
 
@@ -35,10 +35,10 @@ process ERROR_CONSTANT_PLOT {
 
 workflow ERROR_CONSTANT {
     combos = Channel.of(
-        [1e-8, 100],
-        [1e-8, 10],
-        [1e-9, 100],
-        [1e-9, 10],
+        [1e-8, 20, 1],
+        [1e-8, 10, 2],
+        [1e-8, 100, 1],
+        [1e-8, 50, 2],
     )
     pkls = ERROR_CONSTANT_DATA(combos)
     ERROR_CONSTANT_PLOT(pkls.collect())
