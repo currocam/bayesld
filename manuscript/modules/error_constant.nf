@@ -43,3 +43,4 @@ workflow ERROR_CONSTANT {
     pkls = ERROR_CONSTANT_DATA(combos)
     ERROR_CONSTANT_PLOT(pkls.collect())
 }
+

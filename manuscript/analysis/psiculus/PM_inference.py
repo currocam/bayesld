@@ -207,7 +207,7 @@ def _(
             num_workers = 8
         )
 
-    
+
         constant_model.active_learn_bias(
             n_points_per_iter=5,
             n_iter=1,
@@ -329,20 +329,20 @@ def _(
             real log_Ne1;
             real log_Ne2;
             real log_t0;"""
-    
+
         _transformed_parameters = """\
             real<lower=0> Ne1 = exp(log_Ne1);
             real<lower=0> Ne2 = exp(log_Ne2);
             real<lower=0> t0  = exp(log_t0);
             vector[2] Ne_values = [Ne1, Ne2]';
             vector[1] t_boundaries = [t0]';"""
-    
+
         _prior_str = (
                 f"    log_Ne1 ~ normal({np.log(1e5)}, 1);\n"
                 f"    log_Ne2 ~ normal({np.log(1e5)}, 1);\n"
                 f"    log_t0  ~ normal({np.log(200)}, 1);"
             )
-    
+
         two_epoch_model = PiecewiseConstantDemography(
             diversity = data["mean_genetic_diversity"],
             ld = data["mean_linkage_disequilibrium"],
@@ -358,7 +358,7 @@ def _(
             transformed_parameters=_transformed_parameters,
             prior=_prior_str,
         )
-    
+
         two_epoch_model.active_learn_bias(
             n_points_per_iter=20,
             n_iter=5, strategy="pathfinder",
@@ -514,7 +514,7 @@ def _(
             real log_Ne_a;
             real log_t0;
             real log_fold_change;"""
-    
+
         _transformed_parameters = """\
             real<lower=0> Ne_c = exp(log_Ne_c);
             real<lower=0> Ne_a = exp(log_Ne_a);
@@ -522,14 +522,14 @@ def _(
             real log_Ne_f  = log(Ne_c) - log_fold_change;
             real<lower=0> Ne_f = exp(log_Ne_f);
             real alpha = log_fold_change / t0;"""
-    
+
         _prior_str = (
                 f"    log_Ne_c ~ normal({np.log(1e5)}, 1);\n"
                 f"    log_Ne_a ~ normal({np.log(1e5)}, 1);\n"
                 f"    log_t0 ~ normal({np.log(200)}, 1);\n"
                 f"    log_fold_change  ~ normal(0, 1);"
             )
-    
+
         invasion_model = PiecewiseExponentialDemography(
             diversity = data["mean_genetic_diversity"],
             ld = data["mean_linkage_disequilibrium"],
@@ -710,7 +710,7 @@ def _(
             real log_Ne_a;
             ordered[2] log_t_boundaries;
             real<lower=0> log_fold_change;"""
-    
+
         _transformed_parameters = """\
             real<lower=0> Ne_c = exp(log_Ne_c);
             real<lower=0> Ne_a = exp(log_Ne_a);
@@ -719,14 +719,14 @@ def _(
             real alpha = log_fold_change / (t1 - t0);
             real log_Ne_f  = log(Ne_c) - log_fold_change;
             real<lower=0> Ne_f = exp(log_Ne_f);"""
-    
+
         _prior_str = (
                 f"    log_Ne_c ~ normal({np.log(1e5)}, 1);\n"
                 f"    log_Ne_a ~ normal({np.log(1e5)}, 1);\n"
                 f"    log_t_boundaries ~ normal({np.log(200)}, 1);\n"
                 f"    log_fold_change  ~ normal(0, 1);"
             )
-    
+
         carrying_model = ExponentialCarryingCapacityDemography(
             diversity = data["mean_genetic_diversity"],
             ld = data["mean_linkage_disequilibrium"],
@@ -770,10 +770,7 @@ def _(Path, az, carrying_model, msprime, pickle):
 
 
 @app.cell
-def _(carrying_model):
-    idata_carrying_base2 = carrying_model.sample(
-        iter_warmup=10_000, iter_sampling=10_000, adapt_delta=0.99
-    )
+def _():
     return
 
 
