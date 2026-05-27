@@ -155,7 +155,7 @@ def _(baseline_div, sim_div, times):
         patch.set_alpha(0.6)
     for median in bplot["medians"]:
         median.set_color("black")
-    ax_ba.set_ylabel(r"Nucleotide diversity ($\pi$)")
+    ax_ba.set_ylabel(r"$\overline{\pi}$")
 
     fig_ba.savefig("conceptual_figure_panel_ba.pdf")
     fig_ba
@@ -176,13 +176,13 @@ def _(baseline_linkage, left_bins, right_bins, sim_linkage, t5_idx):
         figsize=(ONE_HALF_COL, ONE_HALF_COL * 0.75), dpi=300, constrained_layout=True
     )
     _x = (left_bins + right_bins) / 2 * 100
-    _jitter_scale = (_x[1] - _x[0]) * 0.15
+    _jitter_scale = (right_bins[0] - left_bins[0]) * 100
     _rng = np.random.default_rng(42)
 
     def _plot_jittered(ax, x, data, color, label):
         n_rep = data.shape[0]
         for i in range(n_rep):
-            _jitter = _rng.normal(0, _jitter_scale, size=len(x))
+            _jitter = _rng.uniform(-_jitter_scale / 2, _jitter_scale / 2, size=len(x))
             ax.plot(x + _jitter, data[i], ".", color=color, alpha=0.2, markersize=3)
         ax.plot(x, data.mean(axis=0), "-", color=color, lw=2, label=label)
 
@@ -190,7 +190,7 @@ def _(baseline_linkage, left_bins, right_bins, sim_linkage, t5_idx):
     _plot_jittered(ax_bb, _x, sim_linkage[t5_idx], "C1", "Bottleneck")
 
     ax_bb.set_xlabel("Genetic distance (centimorgan)")
-    ax_bb.set_ylabel(r"Linkage disequilibrium $\mathbb E[X_iX_jY_iY_j]$")
+    ax_bb.set_ylabel(r"$\overline{X_iX_jY_iY_j}$")
     ax_bb.legend()
     fig_bb.savefig("conceptual_figure_panel_bb.pdf")
     fig_bb
@@ -235,7 +235,7 @@ def _(expected_div, labelLine, sim_div, times):
         color="C0",
     )
     ax_c.set_xlabel("Bottleneck start (generations ago)")
-    ax_c.set_ylabel("Relative change in\ngenetic diversity ($\\pi$)")
+    ax_c.set_ylabel(r"Relative change in $\overline{\pi}$")
     ax_c.set_xlim(0, 100)
     labelLine(_hoz_line, x=times[-21], backgroundcolor="white")
 
@@ -287,11 +287,7 @@ def _(baseline_linkage, labelLine, sim_linkage, times):
     )
 
     ax_d.set_xlabel("Bottleneck start (generations ago)")
-    ax_d.set_ylabel(
-        r"Relative change in linkage"
-        + "\n"
-        + r" disequilibrium ($\mathbb E[X_iX_jY_iY_j]$)"
-    )
+    ax_d.set_ylabel(r"Relative change in $\overline{X_iX_jY_iY_j}$")
     ax_d.set_xlim(0, 100)
     ax_d.set_yscale("log")
     ax_d.set_yticks([1.0, 1.5, 3, 6, 9])
