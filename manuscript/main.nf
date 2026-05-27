@@ -7,31 +7,7 @@ include { HOLSTEINFRIESIAN_DATA; VAQUITA_DATA; CANISFAMILIARIS_DATA; STDPOPSIM_P
 include { SBC_CONSTANT; SBC_PIECEWISE_CONSTANT; SBC_PIECEWISE_EXPONENTIAL; SBC_PLOT } from './modules/sbc'
 include { LIZARDS } from './modules/lizards'
 
-workflow {
-    data_ch = CONCEPTUAL_DATA()
-    CONCEPTUAL_PLOTS(data_ch)
-
-    bias_ch = EXAMPLE_BIAS_DATA()
-    EXAMPLE_BIAS_PLOT(bias_ch)
-
-    ERROR_CONSTANT()
-
-    holsteinfriesian_ch = HOLSTEINFRIESIAN_DATA()
-    vaquita_ch = VAQUITA_DATA()
-    canisfamiliaris_ch = CANISFAMILIARIS_DATA()
-    STDPOPSIM_PLOTS(holsteinfriesian_ch, vaquita_ch, canisfamiliaris_ch)
-
-    sbc_constant_ch = SBC_CONSTANT()
-    sbc_pc_ch = SBC_PIECEWISE_CONSTANT()
-    sbc_pe_ch = SBC_PIECEWISE_EXPONENTIAL()
-
-    SBC_PLOT(
-        sbc_constant_ch.results
-            .mix(sbc_pc_ch.results)
-            .mix(sbc_pe_ch.results)
-            .flatten()
-    )
-}
+params.only = null
 
 workflow conceptual {
     CONCEPTUAL_PLOTS(CONCEPTUAL_DATA())
@@ -63,4 +39,22 @@ workflow sbc {
 
 workflow lizards {
     LIZARDS()
+}
+
+workflow {
+    switch (params.only) {
+        case 'conceptual':      conceptual();      break
+        case 'example_bias':    example_bias();    break
+        case 'error_constant':  error_constant();  break
+        case 'stdpopsim':       stdpopsim();       break
+        case 'sbc':             sbc();             break
+        case 'lizards':         lizards();         break
+        default:
+            conceptual()
+            example_bias()
+            error_constant()
+            stdpopsim()
+            sbc()
+            lizards()
+    }
 }
