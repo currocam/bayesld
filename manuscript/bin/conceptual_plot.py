@@ -29,6 +29,7 @@ with app.setup:
     # Theme settings
     plt.style.use(Path(__file__).parent / "theme.mplstyle")
     plt.rc("figure", autolayout=True)
+    plt.rcParams["pgf.texsystem"] = "pdflatex"
 
     ONE_MM = 1 / 25.4
     SINGLE_COL = 85 * ONE_MM
