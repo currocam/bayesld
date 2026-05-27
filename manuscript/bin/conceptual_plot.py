@@ -125,6 +125,7 @@ def _(ne1, ne2):
     ax_a.set_xlabel("Time ago (generations)")
     ax_a.set_ylabel("Population size $N_e(t)$", rotation=90)
     fig_a.savefig("conceptual_figure_panel_a.pdf")
+    fig_a.savefig("conceptual_figure_panel_a.pgf")
     fig_a
     return
 
@@ -158,6 +159,7 @@ def _(baseline_div, sim_div, times):
     ax_ba.set_ylabel(r"$\overline{\pi}$")
 
     fig_ba.savefig("conceptual_figure_panel_ba.pdf")
+    fig_ba.savefig("conceptual_figure_panel_ba.pgf")
     fig_ba
     return (t5_idx,)
 
@@ -193,6 +195,7 @@ def _(baseline_linkage, left_bins, right_bins, sim_linkage, t5_idx):
     ax_bb.set_ylabel(r"$\overline{X_iX_jY_iY_j}$")
     ax_bb.legend()
     fig_bb.savefig("conceptual_figure_panel_bb.pdf")
+    fig_bb.savefig("conceptual_figure_panel_bb.pgf")
     fig_bb
     return
 
@@ -240,6 +243,7 @@ def _(expected_div, labelLine, sim_div, times):
     labelLine(_hoz_line, x=times[-21], backgroundcolor="white")
 
     fig_c.savefig("conceptual_figure_panel_c.pdf")
+    fig_c.savefig("conceptual_figure_panel_c.pgf")
     return
 
 
@@ -302,6 +306,7 @@ def _(baseline_linkage, labelLine, sim_linkage, times):
     )
 
     fig_d.savefig("conceptual_figure_panel_d.pdf")
+    fig_d.savefig("conceptual_figure_panel_d.pgf")
     return
 
 
