@@ -20,6 +20,7 @@ process CONCEPTUAL_PLOTS {
 
     output:
     path "*.pdf"
+    path "*.pgf"
 
     script:
     """
