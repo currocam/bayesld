@@ -42,19 +42,24 @@ workflow lizards {
 }
 
 workflow {
-    switch (params.only) {
-        case 'conceptual':      conceptual();      break
-        case 'example_bias':    example_bias();    break
-        case 'error_constant':  error_constant();  break
-        case 'stdpopsim':       stdpopsim();       break
-        case 'sbc':             sbc();             break
-        case 'lizards':         lizards();         break
-        default:
-            conceptual()
-            example_bias()
-            error_constant()
-            stdpopsim()
-            sbc()
-            lizards()
+    if (params.only == 'conceptual') {
+        conceptual()
+    } else if (params.only == 'example_bias') {
+        example_bias()
+    } else if (params.only == 'error_constant') {
+        error_constant()
+    } else if (params.only == 'stdpopsim') {
+        stdpopsim()
+    } else if (params.only == 'sbc') {
+        sbc()
+    } else if (params.only == 'lizards') {
+        lizards()
+    } else {
+        conceptual()
+        example_bias()
+        error_constant()
+        stdpopsim()
+        sbc()
+        lizards()
     }
 }
