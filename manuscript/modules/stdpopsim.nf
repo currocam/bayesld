@@ -22,15 +22,39 @@ process VAQUITA_DATA {
     """
 }
 
-process CANISFAMILIARIS_DATA {
+process CAEELE_DATA {
     label 'simulation'
 
     output:
-    path "canisfamiliaris.pkl.gz"
+    path "caeele.pkl.gz"
 
     script:
     """
-    canisfamiliaris_data.py canisfamiliaris
+    caeele_data.py caeele
+    """
+}
+
+process ORYSAT_DATA {
+    label 'simulation'
+
+    output:
+    path "orysat.pkl.gz"
+
+    script:
+    """
+    orysat_data.py orysat
+    """
+}
+
+process DROSEC_DATA {
+    label 'simulation'
+
+    output:
+    path "drosec.pkl.gz"
+
+    script:
+    """
+    drosec_data.py drosec
     """
 }
 
@@ -42,7 +66,9 @@ process STDPOPSIM_PLOTS {
     input:
     path holsteinfriesian_pkl
     path vaquita_pkl
-    path canisfamiliaris_pkl
+    path caeele_pkl
+    path orysat_pkl
+    path drosec_pkl
 
     output:
     path "*.pdf"

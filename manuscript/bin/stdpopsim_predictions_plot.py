@@ -192,7 +192,68 @@ def _(
         plt.tight_layout()
         return fig
 
-    return (plot_species,)
+    def plot_constant_species(data_path, title):
+        """Plot constant-Ne demography and LD decay with 95% CI."""
+        data = load_data(data_path)
+        results = data["results"]
+        params = data["params"]
+        num_samples = params["num_samples"]
+        mutation_rate = params["mutation_rate"]
+        Ne = params["Ne"]
+        lb = np.asarray(data["left_bins"])
+        rb = np.asarray(data["right_bins"])
+        x_mid = (lb + rb) / 2
+
+        ld_matrix = np.array([r["mean_linkage_disequilibrium"] for r in results])
+
+        _pi_pred, ld_pred = deterministic.expected_constant(
+            Ne=Ne,
+            left_bins=lb,
+            right_bins=rb,
+            mutation_rate=mutation_rate,
+            sample_size=num_samples,
+        )
+
+        model = stdpopsim.PiecewiseConstantSize(Ne)
+        fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+        fig.suptitle(
+            f"{title} (n={num_samples} diploids)", fontsize=14, fontweight="bold"
+        )
+
+        ax = axes[0]
+        demesdraw.size_history(
+            model.model.to_demes(), ax=ax, log_time=True, colours="C0"
+        )
+        ax.set_title("Demographic history")
+
+        ax = axes[1]
+        x = x_mid * 100
+        boots = bootstrap_ci(ld_matrix, n_boot=10_000, ci=0.95, seed=1000)
+        ax.fill_between(x, boots[:, 1], boots[:, 2], color="C0", alpha=0.2)
+        ax.plot(
+            x,
+            boots[:, 0],
+            color="C0",
+            linewidth=2,
+            label=r"Window average $\overline{X_iX_jY_iY_j}$",
+        )
+        ax.plot(
+            x,
+            ld_pred,
+            color="C1",
+            linewidth=2,
+            linestyle="--",
+            label=r"$\mathrm{F}[X_iX_jY_iY_j]$",
+        )
+        ax.set_xlabel("Genetic distance (centimorgan)")
+        ax.set_ylabel(r"Linkage disequilibrium $\mathbb E[X_iX_jY_iY_j]$")
+        ax.set_title("Linkage disequilibrium decay")
+        ax.legend()
+
+        plt.tight_layout()
+        return fig
+
+    return plot_constant_species, plot_species
 
 
 @app.cell
@@ -242,95 +303,59 @@ def _(Path, plot_species):
 @app.cell
 def _(mo):
     mo.md("""
-    ## Canis familiaris (constant Ne)
+    ## Caenorhabditis elegans (constant Ne)
     """)
     return
 
 
 @app.cell
-def _(
-    Path,
-    deterministic,
-    left_bins,
-    load_data,
-    np,
-    plt,
-    right_bins,
-    stdpopsim,
-):
-    _data = load_data(Path(".") / "canisfamiliaris.pkl.gz")
-    _params = _data["params"]
-    _num_samples = _params["num_samples"]
-
-    # Get mutation rate from species genome (constant across chromosomes)
-    _species = stdpopsim.get_species("CanFam")
-    _first_results = next(iter(_data["results"].values()))
-    _mut_rates = set(
-        _species.genome.get_chromosome(c).mutation_rate
-        for c in set(r["chrom"] for r in _first_results)
+def _(Path, plot_constant_species):
+    _fig = plot_constant_species(
+        data_path=Path(".") / "caeele.pkl.gz",
+        title="C. elegans -- constant Ne",
     )
-    assert len(_mut_rates) == 1
-    _mutation_rate = _mut_rates.pop()
+    _fig.savefig("stdpopsim_caeele.pdf")
+    _fig.savefig("stdpopsim_caeele.pgf")
+    _fig
+    return
 
-    # For each Ne, compute relative error at the smallest bin (index 0)
-    _ne_list = []
-    _mean_list = []
-    _lo_list = []
-    _hi_list = []
-    for _ne, _results in sorted(_data["results"].items()):
-        _ld_matrix = np.array([r["mean_linkage_disequilibrium"] for r in _results])
-        _ld_obs_per_window = _ld_matrix[:, 0]  # smallest bin only
 
-        _, _ld_pred = deterministic.expected_constant(
-            Ne=_ne,
-            left_bins=left_bins,
-            right_bins=right_bins,
-            mutation_rate=_mutation_rate,
-            sample_size=_num_samples,
-        )
-        _pred_val = _ld_pred[0]
+@app.cell
+def _(mo):
+    mo.md("""
+    ## Oryza sativa (constant Ne)
+    """)
+    return
 
-        _rel_err_per_window = (_pred_val - _ld_obs_per_window) / _ld_obs_per_window
-        _ci = bootstrap_ci(_rel_err_per_window, n_boot=10_000, ci=0.95, seed=1000)
-        _ne_list.append(_ne)
-        _mean_list.append(_ci[0])
-        _lo_list.append(_ci[1])
-        _hi_list.append(_ci[2])
 
-    _ne_arr = np.array(_ne_list)
-    _mean_arr = np.array(_mean_list)
-    _lo_arr = np.array(_lo_list)
-    _hi_arr = np.array(_hi_list)
-
-    _fig, _ax = plt.subplots(1, 1, figsize=(6, 5))
-    _fig.suptitle(
-        f"Canis familiaris -- constant Ne (n={_num_samples} diploids)",
-        fontsize=14,
-        fontweight="bold",
+@app.cell
+def _(Path, plot_constant_species):
+    _fig = plot_constant_species(
+        data_path=Path(".") / "orysat.pkl.gz",
+        title="O. sativa -- constant Ne",
     )
+    _fig.savefig("stdpopsim_orysat.pdf")
+    _fig.savefig("stdpopsim_orysat.pgf")
+    _fig
+    return
 
-    _ax.errorbar(
-        _ne_arr,
-        _mean_arr,
-        yerr=[_mean_arr - _lo_arr, _hi_arr - _mean_arr],
-        fmt="o-",
-        color="C0",
-        linewidth=2,
-        markersize=6,
-        capsize=4,
-    )
-    _ax.axhline(0, color="grey", linestyle="--", linewidth=0.8)
-    _ax.set_xscale("log")
-    _ax.set_xlabel("Effective population size (Ne)")
-    _ax.set_ylabel("Relative error (predicted − observed) / observed")
-    _ax.set_title(
-        f"Prediction error at shortest distance bin "
-        f"({left_bins[0] * 100:.2f}–{right_bins[0] * 100:.2f} cM)"
-    )
 
-    plt.tight_layout()
-    _fig.savefig("stdpopsim_canisfamiliaris.pdf")
-    _fig.savefig("stdpopsim_canisfamiliaris.pgf")
+@app.cell
+def _(mo):
+    mo.md("""
+    ## Drosophila sechellia (constant Ne)
+    """)
+    return
+
+
+@app.cell
+def _(Path, plot_constant_species):
+    _fig = plot_constant_species(
+        data_path=Path(".") / "drosec.pkl.gz",
+        title="D. sechellia -- constant Ne",
+    )
+    _fig.savefig("stdpopsim_drosec.pdf")
+    _fig.savefig("stdpopsim_drosec.pgf")
     _fig
     return
 

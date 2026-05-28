@@ -11,22 +11,18 @@
 # ]
 # ///
 """
-Simulate windows from Canis familiaris under constant Ne using stdpopsim
-genome parameters. Vary Ne from 13000 down to 13 (dividing by 10).
-
-Uses msprime directly with SMCK(k=1) ancestry model and genome parameters
-(recombination/mutation rates, chromosome lengths) from stdpopsim.
+Simulate windows from Drosophila sechellia using stdpopsim (constant Ne).
+Then measure LD in distance bins with bayesld.
 
 Outputs
 -------
-  {out_prefix}.pkl.gz  – pickled dict with per-window, per-Ne LD measurements
+  {out_prefix}.pkl.gz  - pickled dict with per-window LD measurements
 """
 
 import gzip
 import pickle
 import sys
 
-import msprime
 import numpy as np
 import stdpopsim
 from bayesld import data_from_tree_sequence, linear_bins
@@ -34,25 +30,20 @@ from joblib import Parallel, delayed
 
 # --- parameters ---
 NUM_SAMPLES = 30
-RANDOM_SEED = 81263947
+RANDOM_SEED = 56218473
 NUM_WORKERS = 8
-CHROMOSOMES = [str(i) for i in range(1, 39)]  # 1..38 autosomes
+CHROMOSOMES = ["2L", "2R", "3L", "3R"]  # autosomes only; skip "4" (rec=0) and X
 WINDOW_MORGAN = 0.2  # 20 cM
-NE_VALUES = np.geomspace(30_000, 50, num=100).tolist()
 
 left_bins, right_bins = linear_bins()
 
 
 def build_windows(species):
-    """Tile each chromosome into non-overlapping windows of WINDOW_MORGAN.
-
-    Extracts plain scalars from stdpopsim so the returned dicts are picklable.
-    """
+    """Tile each chromosome into non-overlapping windows of WINDOW_MORGAN."""
     windows = []
     for chrom_id in CHROMOSOMES:
         chrom = species.genome.get_chromosome(chrom_id)
         rec_rate = chrom.recombination_rate
-        mut_rate = chrom.mutation_rate
         window_bp = int(WINDOW_MORGAN / rec_rate)
         left = 0
         while left + window_bp <= chrom.length:
@@ -62,7 +53,7 @@ def build_windows(species):
                     "left": left,
                     "right": left + window_bp,
                     "recombination_rate": rec_rate,
-                    "mutation_rate": mut_rate,
+                    "mutation_rate": chrom.mutation_rate,
                 }
             )
             left += window_bp
@@ -70,25 +61,24 @@ def build_windows(species):
     return windows
 
 
-def simulate(window, ne, seed):
-    """Simulate one window with msprime SMCK(k=1) and measure LD."""
-    ts = msprime.sim_ancestry(
-        samples=NUM_SAMPLES,
-        sequence_length=window["right"] - window["left"],
-        recombination_rate=window["recombination_rate"],
-        population_size=ne,
-        model=msprime.SMCK(k=1),
-        random_seed=seed,
+def simulate(window, model, species, engine, seed):
+    contig = species.get_contig(
+        chromosome=window["chrom"],
+        left=window["left"],
+        right=window["right"],
+        mutation_rate=window["mutation_rate"],
     )
-    ts = msprime.sim_mutations(
-        ts,
-        rate=window["mutation_rate"],
-        random_seed=seed,
-        model=msprime.BinaryMutationModel(),
+    samples = {"pop_0": NUM_SAMPLES}
+    ts = engine.simulate(
+        demographic_model=model,
+        contig=contig,
+        samples=samples,
+        seed=seed,
     )
+    rec_rate = window["recombination_rate"]
     ld_data = data_from_tree_sequence(
         ts=ts,
-        recombination_rate=window["recombination_rate"],
+        recombination_rate=rec_rate,
         left_bins_morgan=left_bins,
         right_bins_morgan=right_bins,
     )
@@ -106,37 +96,39 @@ def simulate(window, ne, seed):
 def main():
     import tqdm
 
-    out_prefix = sys.argv[1] if len(sys.argv) > 1 else "canisfamiliaris"
+    out_prefix = sys.argv[1] if len(sys.argv) > 1 else "drosec"
 
-    species = stdpopsim.get_species("CanFam")
+    species = stdpopsim.get_species("DroSec")
+    model = stdpopsim.PiecewiseConstantSize(species.population_size)
+    engine = stdpopsim.get_engine("msprime")
+
+    mut_rates = {species.genome.get_chromosome(c).mutation_rate for c in CHROMOSOMES}
+    assert len(mut_rates) == 1, f"Mixed mutation rates: {mut_rates}"
+    mutation_rate = mut_rates.pop()
+
     windows = build_windows(species)
     print(
         f"Prepared {len(windows)} windows of {WINDOW_MORGAN * 100:.0f} cM "
         f"across {len(CHROMOSOMES)} chromosomes"
     )
-    print(f"Ne values: {NE_VALUES}")
 
     rng = np.random.RandomState(RANDOM_SEED)
+    seeds = rng.randint(1, 2**31, size=len(windows))
 
-    all_results = {}
-    for ne in NE_VALUES:
-        print(f"\n--- Ne = {ne:,} ---")
-        seeds = rng.randint(1, 2**31, size=len(windows))
-        results = list(
-            tqdm.tqdm(
-                Parallel(n_jobs=NUM_WORKERS, return_as="generator", prefer="threads")(
-                    delayed(simulate)(w, ne, int(s)) for w, s in zip(windows, seeds)
-                ),
-                total=len(windows),
-                desc=f"Ne={ne:,}",
-            )
+    results = list(
+        tqdm.tqdm(
+            Parallel(n_jobs=NUM_WORKERS, return_as="generator")(
+                delayed(simulate)(w, model, species, engine, int(s))
+                for w, s in zip(windows, seeds)
+            ),
+            total=len(windows),
+            desc="Windows",
         )
-        all_results[ne] = results
+    )
 
-    # --- save ---
     pkl_path = f"{out_prefix}.pkl.gz"
     data = {
-        "results": all_results,
+        "results": results,
         "left_bins": left_bins,
         "right_bins": right_bins,
         "params": {
@@ -144,15 +136,15 @@ def main():
             "random_seed": RANDOM_SEED,
             "chromosomes": CHROMOSOMES,
             "window_morgan": WINDOW_MORGAN,
-            "ne_values": NE_VALUES,
-            "species_id": "CanFam",
+            "model_id": "PiecewiseConstant",
+            "species_id": "DroSec",
+            "Ne": species.population_size,
+            "mutation_rate": mutation_rate,
         },
     }
     with gzip.open(pkl_path, "wb") as f:
         pickle.dump(data, f)
-    print(
-        f"\nSaved {sum(len(v) for v in all_results.values())} total windows to {pkl_path}"
-    )
+    print(f"Saved {len(results)} windows to {pkl_path}")
 
 
 if __name__ == "__main__":

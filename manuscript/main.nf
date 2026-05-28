@@ -3,7 +3,7 @@ nextflow.enable.dsl = 2
 include { CONCEPTUAL_DATA; CONCEPTUAL_PLOTS } from './modules/conceptual'
 include { EXAMPLE_BIAS_DATA; EXAMPLE_BIAS_PLOT } from './modules/example_bias'
 include { ERROR_CONSTANT_DATA; ERROR_CONSTANT_PLOT; ERROR_CONSTANT } from './modules/error_constant'
-include { HOLSTEINFRIESIAN_DATA; VAQUITA_DATA; CANISFAMILIARIS_DATA; STDPOPSIM_PLOTS } from './modules/stdpopsim'
+include { HOLSTEINFRIESIAN_DATA; VAQUITA_DATA; CAEELE_DATA; ORYSAT_DATA; DROSEC_DATA; STDPOPSIM_PLOTS } from './modules/stdpopsim'
 include { SBC_CONSTANT; SBC_PIECEWISE_CONSTANT; SBC_PIECEWISE_EXPONENTIAL; SBC_PLOT } from './modules/sbc'
 include { LIZARDS } from './modules/lizards'
 
@@ -22,7 +22,7 @@ workflow error_constant {
 }
 
 workflow stdpopsim {
-    STDPOPSIM_PLOTS(HOLSTEINFRIESIAN_DATA(), VAQUITA_DATA(), CANISFAMILIARIS_DATA())
+    STDPOPSIM_PLOTS(HOLSTEINFRIESIAN_DATA(), VAQUITA_DATA(), CAEELE_DATA(), ORYSAT_DATA(), DROSEC_DATA())
 }
 
 workflow sbc {
