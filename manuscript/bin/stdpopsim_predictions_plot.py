@@ -183,10 +183,10 @@ def _(
             color="C1",
             linewidth=2,
             linestyle="--",
-            label=r"$\mathrm{F}[X_iX_jY_iY_j]$",
+            label=r"$\widehat{\mathbb E}_{\mathrm{F}}[X_iX_jY_iY_j]$ (approx. prediction)",
         )
         ax.set_xlabel("Genetic distance (centimorgan)")
-        ax.set_ylabel(r"Linkage disequilibrium $\mathbb E[X_iX_jY_iY_j]$")
+        ax.set_ylabel(r"$X_iX_jY_iY_j$")
         ax.set_title("Linkage disequilibrium decay")
         ax.legend()
 
@@ -244,10 +244,10 @@ def _(
             color="C1",
             linewidth=2,
             linestyle="--",
-            label=r"$\mathrm{F}[X_iX_jY_iY_j]$",
+            label=r"$\widehat{\mathbb E}_{\mathrm{F}}[X_iX_jY_iY_j]$ (approx. prediction)",
         )
         ax.set_xlabel("Genetic distance (centimorgan)")
-        ax.set_ylabel(r"Linkage disequilibrium $\mathbb E[X_iX_jY_iY_j]$")
+        ax.set_ylabel(r"$X_iX_jY_iY_j$")
         ax.set_title("Linkage disequilibrium decay")
         ax.legend()
 
