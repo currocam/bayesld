@@ -144,6 +144,7 @@ def test_binned_ld_random():
         right_bins,
         [0.0, seq_len],
         [rate],
+        0.25,
     )
     streaming.add_batch(genotypes, positions, region_span)
     streaming_results = streaming.finalize()

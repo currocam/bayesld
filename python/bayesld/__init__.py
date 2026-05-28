@@ -50,6 +50,7 @@ def data_from_tree_sequence(
     chunk_size: int = 10_000,
     ploidy: int = 2,
     progress_bar: bool = False,
+    maf_threshold: float = 0.25,
 ) -> dict:
     """
     Compute linkage disequilibrium and genetic diversity statistics from a tskit tree sequence.
@@ -98,6 +99,7 @@ def data_from_tree_sequence(
             right_bins_morgan.tolist(),
             map_position_bp,
             map_rate,
+            maf_threshold,
         )
     elif ploidy == 1:
         stats = _bayesld.StreamingStatsHaploid(
@@ -105,6 +107,7 @@ def data_from_tree_sequence(
             right_bins_morgan.tolist(),
             map_position_bp,
             map_rate,
+            maf_threshold,
         )
     else:
         raise ValueError("Ploidy must be 1 or 2")
@@ -195,6 +198,7 @@ def data_from_vcf(
     ploidy: int = 2,
     progress_bar: bool = False,
     samples: list[str] | None = None,
+    maf_threshold: float = 0.25,
 ) -> dict:
     """
     Compute linkage disequilibrium and genetic diversity statistics from a VCF/BCF file.
@@ -257,6 +261,7 @@ def data_from_vcf(
             right_bins_morgan.tolist(),
             map_position_bp,
             map_rate,
+            maf_threshold,
         )
     elif ploidy == 1:
         stats = _bayesld.StreamingStatsHaploid(
@@ -264,6 +269,7 @@ def data_from_vcf(
             right_bins_morgan.tolist(),
             map_position_bp,
             map_rate,
+            maf_threshold,
         )
     else:
         raise ValueError("Ploidy must be 1 or 2")

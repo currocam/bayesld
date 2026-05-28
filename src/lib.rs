@@ -248,7 +248,13 @@ pub struct StreamingStats {
 }
 
 impl StreamingStats {
-    fn new(left_bins: Vec<f64>, right_bins: Vec<f64>, ploidy: Ploidy, rate_map: RateMap) -> Self {
+    fn new(
+        left_bins: Vec<f64>,
+        right_bins: Vec<f64>,
+        ploidy: Ploidy,
+        rate_map: RateMap,
+        maf_threshold: f64,
+    ) -> Self {
         assert_eq!(left_bins.len(), right_bins.len());
         let n = left_bins.len();
         StreamingStats {
@@ -256,7 +262,7 @@ impl StreamingStats {
             right_bins,
             rate_map,
             window: RollingWindow::new(),
-            maf_threshold: 0.25,
+            maf_threshold,
             genetic_diversity: OnlineAverage::new(),
             linkage_disequilibrium: vec![OnlineAverage::new(); n],
             ploidy,
@@ -442,6 +448,7 @@ impl StreamingStatsDiploid {
         right_bins_morgan: Vec<f64>,
         map_position_bp: Vec<f64>,
         map_rate: Vec<f64>,
+        maf_threshold: f64,
     ) -> PyResult<Self> {
         let rate_map = RateMap::build(map_position_bp, map_rate)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
@@ -450,6 +457,7 @@ impl StreamingStatsDiploid {
             right_bins_morgan,
             Ploidy::Diploid,
             rate_map,
+            maf_threshold,
         );
         Ok(Self { _inner: stats })
     }
@@ -481,6 +489,7 @@ impl StreamingStatsHaploid {
         right_bins_morgan: Vec<f64>,
         map_position_bp: Vec<f64>,
         map_rate: Vec<f64>,
+        maf_threshold: f64,
     ) -> PyResult<Self> {
         let rate_map = RateMap::build(map_position_bp, map_rate)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
@@ -489,6 +498,7 @@ impl StreamingStatsHaploid {
             right_bins_morgan,
             Ploidy::Haploid,
             rate_map,
+            maf_threshold,
         );
         Ok(Self { _inner: stats })
     }
