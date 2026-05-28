@@ -24,6 +24,7 @@ with app.setup:
     plt.style.use(Path(__file__).parent / "theme.mplstyle")
     plt.rc("figure", autolayout=True)
     plt.rcParams["pgf.texsystem"] = "pdflatex"
+    plt.rcParams["pgf.preamble"] = r"\usepackage{amsmath}\usepackage{amssymb}"
 
     ONE_MM = 1 / 25.4
     SINGLE_COL = 85 * ONE_MM
