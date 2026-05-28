@@ -48,6 +48,8 @@ def _():
             d = pickle.load(f)
         params = d["params"]
         ne_values = np.asarray([r["Ne"] for r in d["results"]])
+        ploidy = int(params.get("ploidy", 2))
+        det_key = "ld_det_inf" if ploidy == 1 else "ld_det"
 
         ratio = np.empty((len(d["results"]), len(d["left_bins"])))
         ratio_lo = np.empty_like(ratio)
@@ -55,16 +57,15 @@ def _():
         for k, r in enumerate(d["results"]):
             ld_mc = np.asarray(r["ld_mc"], dtype=float)  # (n_rep, n_bins)
             ld_mc = np.where(ld_mc == 0, np.nan, ld_mc)
-            ld_det_inf = np.asarray(r["ld_det_inf"])
-            ratio[k] = ld_det_inf / np.nanmean(ld_mc, axis=0)
+            ld_det = np.asarray(r[det_key])
+            ratio[k] = ld_det / np.nanmean(ld_mc, axis=0)
             n_rep = ld_mc.shape[0]
             idx = rng.integers(0, n_rep, size=(BOOTSTRAP_DRAWS, n_rep))
             ld_mc_boot = np.nanmean(ld_mc[idx], axis=1)  # (B, n_bins)
-            ratio_boot = ld_det_inf / ld_mc_boot
+            ratio_boot = ld_det / ld_mc_boot
             ratio_lo[k] = np.nanquantile(ratio_boot, 0.05, axis=0)
             ratio_hi[k] = np.nanquantile(ratio_boot, 0.95, axis=0)
 
-        ploidy = int(params.get("ploidy", 2))
         combos.append(
             {
                 "label": f"{'haploid' if ploidy == 1 else 'diploid'}, n={params['num_samples']}",
