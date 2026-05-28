@@ -46,6 +46,7 @@ process STDPOPSIM_PLOTS {
 
     output:
     path "*.pdf"
+    path "*.pgf"
 
     script:
     """

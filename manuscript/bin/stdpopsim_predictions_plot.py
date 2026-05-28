@@ -31,6 +31,8 @@ def _():
     from bayesld import deterministic, linear_bins
 
     plt.style.use(Path(__file__).parent / "theme.mplstyle")
+    plt.rc("figure", autolayout=True)
+    plt.rcParams["pgf.texsystem"] = "pdflatex"
     left_bins, right_bins = linear_bins()
     bin_midpoints = (left_bins + right_bins) / 2
     return (
@@ -157,7 +159,7 @@ def _(
         # Panel A: Demography
         ax = axes[0]
         demes_graph = model.model.to_demes()
-        demesdraw.tubes(demes_graph, ax=ax, colours="C0", log_time=True)
+        demesdraw.size_history(demes_graph, ax=ax, log_time=True, colours="C0")
         ax.set_title("Demographic history")
 
         # Panel B: LD decay with 95% CI
@@ -167,14 +169,20 @@ def _(
         ld_lo = boots[:, 1]
         ld_hi = boots[:, 2]
         ax.fill_between(x, ld_lo, ld_hi, color="C0", alpha=0.2)
-        ax.plot(x, boots[:, 0], color="C0", linewidth=2, label="Observed mean")
+        ax.plot(
+            x,
+            boots[:, 0],
+            color="C0",
+            linewidth=2,
+            label=r"Window average $\overline{X_iX_jY_iY_j}$",
+        )
         ax.plot(
             x,
             ld_pred,
             color="C1",
             linewidth=2,
             linestyle="--",
-            label="Approximate prediction",
+            label=r"$\mathrm{F}[X_iX_jY_iY_j]$",
         )
         ax.set_xlabel("Genetic distance (centimorgan)")
         ax.set_ylabel(r"Linkage disequilibrium $\mathbb E[X_iX_jY_iY_j]$")
@@ -204,6 +212,7 @@ def _(Path, plot_species):
         title="Holstein-Friesian cattle -- HolsteinFriesian_1M13",
     )
     _fig.savefig("stdpopsim_holsteinfriesian.pdf")
+    _fig.savefig("stdpopsim_holsteinfriesian.pgf")
     _fig
     return
 
@@ -225,6 +234,7 @@ def _(Path, plot_species):
         title="Vaquita -- Vaquita2Epoch_1R22",
     )
     _fig.savefig("stdpopsim_vaquita.pdf")
+    _fig.savefig("stdpopsim_vaquita.pgf")
     _fig
     return
 
@@ -320,6 +330,7 @@ def _(
 
     plt.tight_layout()
     _fig.savefig("stdpopsim_canisfamiliaris.pdf")
+    _fig.savefig("stdpopsim_canisfamiliaris.pgf")
     _fig
     return
 
