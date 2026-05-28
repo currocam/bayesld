@@ -175,7 +175,7 @@ def _(
             boots[:, 0],
             color="C0",
             linewidth=2,
-            label=r"Window average $\overline{X_iX_jY_iY_j}$",
+            label=r"$\overline{X_iX_jY_iY_j}$",
         )
         ax.plot(
             x,
@@ -183,7 +183,7 @@ def _(
             color="C1",
             linewidth=2,
             linestyle="--",
-            label=r"$\widehat{\mathbb E}_{\mathrm{F}}[X_iX_jY_iY_j]$ (approx. prediction)",
+            label=r"$\widehat{\mathbb E}_{\mathrm{F}}[X_iX_jY_iY_j]$",
         )
         ax.set_xlabel("Genetic distance (centimorgan)")
         ax.set_ylabel(r"$X_iX_jY_iY_j$")
@@ -236,7 +236,7 @@ def _(
             boots[:, 0],
             color="C0",
             linewidth=2,
-            label=r"Window average $\overline{X_iX_jY_iY_j}$",
+            label=r"$\overline{X_iX_jY_iY_j}$",
         )
         ax.plot(
             x,
@@ -244,7 +244,7 @@ def _(
             color="C1",
             linewidth=2,
             linestyle="--",
-            label=r"$\widehat{\mathbb E}_{\mathrm{F}}[X_iX_jY_iY_j]$ (approx. prediction)",
+            label=r"$\widehat{\mathbb E}_{\mathrm{F}}[X_iX_jY_iY_j]$",
         )
         ax.set_xlabel("Genetic distance (centimorgan)")
         ax.set_ylabel(r"$X_iX_jY_iY_j$")
