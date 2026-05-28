@@ -33,6 +33,7 @@ def _():
     plt.style.use(Path(__file__).parent / "theme.mplstyle")
     plt.rc("figure", autolayout=True)
     plt.rcParams["pgf.texsystem"] = "pdflatex"
+    plt.rcParams["pgf.preamble"] = r"\usepackage{amssymb}"
     left_bins, right_bins = linear_bins()
     bin_midpoints = (left_bins + right_bins) / 2
     return (
