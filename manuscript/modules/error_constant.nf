@@ -35,12 +35,11 @@ process ERROR_CONSTANT_PLOT {
 
 workflow ERROR_CONSTANT {
     combos = Channel.of(
-        [1e-8, 20, 1],
-        [1e-8, 10, 2],
+        //[1e-8, 20, 1],
+        //[1e-8, 10, 2],
         [1e-8, 100, 1],
         [1e-8, 50, 2],
     )
     pkls = ERROR_CONSTANT_DATA(combos)
     ERROR_CONSTANT_PLOT(pkls.collect())
 }
-

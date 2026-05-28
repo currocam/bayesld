@@ -124,12 +124,13 @@ def _(combos):
         ax.set_yscale("log")
         ax.set_xlabel(r"$N_e$ (effective population size )")
         ax.set_ylabel(
-            r"Relative error "
-            r"$\widehat{\mathbb{E}}_{\mathrm{F}}[X_iX_jY_iY_j] / "
-            r"\widehat{\mathbb{E}}_{\mathrm{MC}}[X_iX_jY_iY_j]$"
+            r"Relative error"
+            # r"$\widehat{\mathbb{E}}_{\mathrm{F}}[X_iX_jY_iY_j] / "
+            # r"\widehat{\mathbb{E}}_{\mathrm{MC}}[X_iX_jY_iY_j]$"
         )
         ax.set_title(
-            f"r $\\in$ [{left_bins[b]:.2g}, {right_bins[b]:.2g}]", fontsize="small"
+            f"u $\\in$ [{left_bins[b]:.2g}, {right_bins[b]:.2g}] Morgan",
+            fontsize="small",
         )
         ax.legend(fontsize="x-small")
 
