@@ -23,6 +23,7 @@ with app.setup:
 
     plt.style.use(Path(__file__).parent / "theme.mplstyle")
     plt.rc("figure", autolayout=True)
+    plt.rcParams["pgf.texsystem"] = "pdflatex"
 
     ONE_MM = 1 / 25.4
     SINGLE_COL = 85 * ONE_MM
@@ -133,6 +134,7 @@ def _(combos):
 
         if mo.app_meta().mode == "script":
             fig.savefig(f"error_constant_bin{b:02d}.pdf")
+            fig.savefig(f"error_constant_bin{b:02d}.pgf")
         figs.append(fig)
     figs
     return
