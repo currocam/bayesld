@@ -6,7 +6,7 @@ process EXAMPLE_BIAS_DATA {
 
     script:
     """
-    # v2 — SMC + SMC' + DTWF, rtol=0.01
+    # v3 — 5 scenarios x 4 variants, per-scenario SMC(k) + DTWF
     example_bias_data.py example_bias_data.pkl
     """
 }
@@ -21,10 +21,11 @@ process EXAMPLE_BIAS_PLOT {
 
     output:
     path "*.pdf"
+    path "*.pgf"
 
     script:
     """
-    # v2 — per-panel PDFs, coalescent label per row
+    # v3 — demography + SMC + DTWF panels per scenario, PDF + PGF
     example_bias_plot.py --pkl ${pkl}
     """
 }

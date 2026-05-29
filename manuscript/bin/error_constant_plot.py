@@ -91,7 +91,7 @@ def _():
 def _(combos):
     left_bins = combos[0]["left_bins"]
     right_bins = combos[0]["right_bins"]
-    bin_indices = [0, len(left_bins) - 1]  # smallest, largest distance
+    bin_indices = [0, 1, 2]  # first three distance bins
 
     det_specs = [
         ("ld_det", "corrected"),
