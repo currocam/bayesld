@@ -13,6 +13,7 @@
 import gzip
 import pickle
 import sys
+import time
 
 import msprime
 import numpy as np
@@ -157,15 +158,26 @@ MC_KWARGS = dict(
 )
 
 
-def run_variant(variant, smc_k, seed):
+def run_variant(variant, smc_k, seed, scenario_name=""):
     kw = variant["kwargs"]
+    label = variant["label"]
+    tag = f"[{scenario_name} | {label}]"
+
+    t0 = time.perf_counter()
     pi_det, ld_det = variant["det_fn"](**kw, **DET_KWARGS)
+    tqdm.tqdm.write(f"{tag} det          {time.perf_counter() - t0:7.2f}s")
+
+    t0 = time.perf_counter()
     pi_smc, ld_smc = variant["mc_fn"](
         **kw, **MC_KWARGS, random_seed=seed, model=msprime.SMCK(k=smc_k)
     )
+    tqdm.tqdm.write(f"{tag} SMC(k={smc_k})     {time.perf_counter() - t0:7.2f}s")
+
+    t0 = time.perf_counter()
     pi_dtwf, ld_dtwf = variant["mc_fn"](
         **kw, **MC_KWARGS, random_seed=seed + 300, model=DTWF_MODEL
     )
+    tqdm.tqdm.write(f"{tag} DTWF         {time.perf_counter() - t0:7.2f}s")
     return {
         "label": variant["label"],
         "epochs": variant["epochs"],
@@ -187,7 +199,7 @@ def main():
         variants = []
         for v in tqdm.tqdm(scenario["variants"], desc=name, leave=False):
             variants.append(
-                run_variant(v, scenario["smc_k"], RANDOM_SEED + seed * 1000)
+                run_variant(v, scenario["smc_k"], RANDOM_SEED + seed * 1000, name)
             )
             seed += 1
         results[name] = {"smc_k": scenario["smc_k"], "variants": variants}
