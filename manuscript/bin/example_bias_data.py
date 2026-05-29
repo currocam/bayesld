@@ -83,36 +83,59 @@ def carrying_capacity(label, *, Ne_c, Ne_a, Nf, t0, t1):
 
 
 SCENARIOS = {
-    "constant": dict(smc_k=1, variants=[
-        constant("Nc=5e2", 500),
-        constant("Nc=1e3", 1_000),
-        constant("Nc=2e3", 2_000),
-        constant("Nc=1e4", 10_000),
-    ]),
-    "decline": dict(smc_k=0, variants=[
-        piecewise_exp("Nc=1e3, t0=25", Ne_c=1_000, Ne_a=10_000, t0=25),
-        piecewise_exp("Nc=5e3, t0=25", Ne_c=5_000, Ne_a=10_000, t0=25),
-        piecewise_exp("Nc=1e3, t0=50", Ne_c=1_000, Ne_a=10_000, t0=50),
-        piecewise_exp("Nc=5e3, t0=50", Ne_c=5_000, Ne_a=10_000, t0=50),
-    ]),
-    "invasion": dict(smc_k=1, variants=[
-        piecewise_exp("Nf=10, t0=25",  Ne_c=5_000, Ne_a=10_000, t0=25, Nf=10),
-        piecewise_exp("Nf=100, t0=25", Ne_c=5_000, Ne_a=10_000, t0=25, Nf=100),
-        piecewise_exp("Nf=10, t0=50",  Ne_c=5_000, Ne_a=10_000, t0=50, Nf=10),
-        piecewise_exp("Nf=100, t0=50", Ne_c=5_000, Ne_a=10_000, t0=50, Nf=100),
-    ]),
-    "carrying_capacity": dict(smc_k=0, variants=[
-        carrying_capacity("Nf=100, t0=25", Ne_c=5_000, Ne_a=10_000, Nf=100, t0=25, t1=75),
-        carrying_capacity("Nf=10, t0=25",  Ne_c=5_000, Ne_a=10_000, Nf=10,  t0=25, t1=75),
-        carrying_capacity("Nf=10, t0=50",  Ne_c=5_000, Ne_a=10_000, Nf=10,  t0=50, t1=75),
-        carrying_capacity("Nf=100, t0=50", Ne_c=5_000, Ne_a=10_000, Nf=100, t0=50, t1=75),
-    ]),
-    "growth": dict(smc_k=0, variants=[
-        piecewise_exp("Nc=1e4, t0=25", Ne_c=10_000, Ne_a=1_000, t0=25),
-        piecewise_exp("Nc=5e3, t0=25", Ne_c=5_000,  Ne_a=1_000, t0=25),
-        piecewise_exp("Nc=1e4, t0=50", Ne_c=10_000, Ne_a=1_000, t0=50),
-        piecewise_exp("Nc=5e3, t0=50", Ne_c=5_000,  Ne_a=1_000, t0=50),
-    ]),
+    "constant": dict(
+        smc_k=1,
+        variants=[
+            constant("Nc=5e2", 500),
+            constant("Nc=1e3", 1_000),
+            constant("Nc=2e3", 2_000),
+            constant("Nc=1e4", 10_000),
+        ],
+    ),
+    "decline": dict(
+        smc_k=0,
+        variants=[
+            piecewise_exp("Nc=1e3, t0=25", Ne_c=1_000, Ne_a=10_000, t0=25),
+            piecewise_exp("Nc=5e3, t0=25", Ne_c=5_000, Ne_a=10_000, t0=25),
+            piecewise_exp("Nc=1e3, t0=50", Ne_c=1_000, Ne_a=10_000, t0=50),
+            piecewise_exp("Nc=5e3, t0=50", Ne_c=5_000, Ne_a=10_000, t0=50),
+        ],
+    ),
+    "invasion": dict(
+        smc_k=1,
+        variants=[
+            piecewise_exp("Nf=10, t0=25", Ne_c=5_000, Ne_a=10_000, t0=25, Nf=10),
+            piecewise_exp("Nf=100, t0=25", Ne_c=5_000, Ne_a=10_000, t0=25, Nf=100),
+            piecewise_exp("Nf=10, t0=50", Ne_c=5_000, Ne_a=10_000, t0=50, Nf=10),
+            piecewise_exp("Nf=100, t0=50", Ne_c=5_000, Ne_a=10_000, t0=50, Nf=100),
+        ],
+    ),
+    "carrying_capacity": dict(
+        smc_k=0,
+        variants=[
+            carrying_capacity(
+                "Nf=100, t0=25", Ne_c=5_000, Ne_a=10_000, Nf=100, t0=25, t1=75
+            ),
+            carrying_capacity(
+                "Nf=10, t0=25", Ne_c=5_000, Ne_a=10_000, Nf=10, t0=25, t1=75
+            ),
+            carrying_capacity(
+                "Nf=10, t0=50", Ne_c=5_000, Ne_a=10_000, Nf=10, t0=50, t1=75
+            ),
+            carrying_capacity(
+                "Nf=100, t0=50", Ne_c=5_000, Ne_a=10_000, Nf=100, t0=50, t1=75
+            ),
+        ],
+    ),
+    "growth": dict(
+        smc_k=0,
+        variants=[
+            piecewise_exp("Nc=1e4, t0=25", Ne_c=10_000, Ne_a=1_000, t0=25),
+            piecewise_exp("Nc=5e3, t0=25", Ne_c=5_000, Ne_a=1_000, t0=25),
+            piecewise_exp("Nc=1e4, t0=50", Ne_c=10_000, Ne_a=1_000, t0=50),
+            piecewise_exp("Nc=5e3, t0=50", Ne_c=5_000, Ne_a=1_000, t0=50),
+        ],
+    ),
 }
 
 
@@ -163,7 +186,9 @@ def main():
     for name, scenario in tqdm.tqdm(SCENARIOS.items(), desc="Scenarios"):
         variants = []
         for v in tqdm.tqdm(scenario["variants"], desc=name, leave=False):
-            variants.append(run_variant(v, scenario["smc_k"], RANDOM_SEED + seed * 1000))
+            variants.append(
+                run_variant(v, scenario["smc_k"], RANDOM_SEED + seed * 1000)
+            )
             seed += 1
         results[name] = {"smc_k": scenario["smc_k"], "variants": variants}
 

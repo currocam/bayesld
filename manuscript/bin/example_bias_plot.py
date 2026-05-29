@@ -49,76 +49,64 @@ def bootstrap_ci(data, n_boot=10_000, ci=0.95, seed=1000):
 
 
 @app.function
-def legend_below(ax, handles=None, title=None, ncol=2):
-    """LaTeX-style: frameless legend centered below the axes."""
-    kw = dict(
+def new_panel(title):
+    fig, ax = plt.subplots(figsize=PANEL_SIZE, dpi=300, constrained_layout=True)
+    ax.set_title(title, fontsize=8, fontweight="bold")
+    return fig, ax
+
+
+@app.function
+def legend_below(ax, **kw):
+    ax.legend(
         loc="upper center",
         bbox_to_anchor=(0.5, -0.22),
         frameon=False,
         fontsize=6,
-        ncol=ncol,
+        ncol=2,
         handlelength=1.5,
         columnspacing=1.0,
+        title_fontsize=6,
+        **kw,
     )
-    if title is not None:
-        kw["title"] = title
-        kw["title_fontsize"] = 6
-    if handles is None:
-        ax.legend(**kw)
-    else:
-        ax.legend(handles=handles, **kw)
-
-
-@app.function
-def make_fig():
-    return plt.subplots(figsize=PANEL_SIZE, dpi=300, constrained_layout=True)
 
 
 @app.function
 def save_panel(fig, name):
     if mo.app_meta().mode == "script":
-        fig.savefig(f"{name}.pdf")
-        fig.savefig(f"{name}.pgf")
+        for ext in ("pdf", "pgf"):
+            fig.savefig(f"{name}.{ext}")
 
 
 @app.function
 def plot_demography(variants, title):
-    """Overlay Ne(t) for each variant using demesdraw.size_history."""
-    fig, ax = make_fig()
+    fig, ax = new_panel(title)
     b = demes.Builder(time_units="generations")
     for i, v in enumerate(variants):
         b.add_deme(f"pop{i}", description=v["label"], epochs=v["epochs"])
-    graph = b.resolve()
     colors = {f"pop{i}": f"C{i}" for i in range(len(variants))}
     demesdraw.size_history(
-        graph, ax=ax, colours=colors, annotate_epochs=False, log_time=False
+        b.resolve(), ax=ax, colours=colors, annotate_epochs=False, log_time=False
     )
     handles = [
-        plt.Line2D([0], [0], color=f"C{i}", label=v["label"])
-        for i, v in enumerate(variants)
+        plt.Line2D([], [], color=c, label=v["label"])
+        for v, c in zip(variants, colors.values())
     ]
     legend_below(ax, handles=handles)
-    ax.set_title(title, fontsize=8, fontweight="bold")
     return fig
 
 
 @app.function
 def plot_ld(variants, bin_midpoints, mc_key, mc_label, title):
-    """Overlay det (solid) vs MC (dashed, with bootstrap CI) for each variant."""
-    fig, ax = make_fig()
+    fig, ax = new_panel(f"{title} ({mc_label})")
     for i, v in enumerate(variants):
         color = f"C{i}"
-        boots = bootstrap_ci(v[mc_key])
+        m, lo, hi = bootstrap_ci(v[mc_key]).T
         ax.plot(bin_midpoints, v["ld_det"], color=color)
-        ax.plot(bin_midpoints, boots[:, 0], color=color, linestyle="--", label=v["label"])
-        ax.fill_between(
-            bin_midpoints, boots[:, 1], boots[:, 2],
-            alpha=0.1, color=color, linewidth=0.0,
-        )
+        ax.plot(bin_midpoints, m, color=color, linestyle="--", label=v["label"])
+        ax.fill_between(bin_midpoints, lo, hi, alpha=0.1, color=color, linewidth=0.0)
     ax.set_xscale("log")
     ax.set_xlabel("Genetic distance (Morgan)")
     ax.set_ylabel(r"$\mathbb{E}[X_iX_jY_iY_j]$")
-    ax.set_title(f"{title} ({mc_label})", fontsize=8, fontweight="bold")
     legend_below(ax, title="solid: det / dashed: MC")
     return fig
 
@@ -148,8 +136,9 @@ def _(results, bin_midpoints):
         save_panel(fig_smc, f"example_bias_{name}_smc")
         save_panel(fig_dtwf, f"example_bias_{name}_dtwf")
 
-        blocks.append(mo.vstack([mo.md(f"### {title}"),
-                                 mo.hstack([fig_demo, fig_smc, fig_dtwf])]))
+        blocks.append(
+            mo.vstack([mo.md(f"### {title}"), mo.hstack([fig_demo, fig_smc, fig_dtwf])])
+        )
     mo.vstack(blocks)
     return
 
