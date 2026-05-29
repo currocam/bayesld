@@ -110,17 +110,16 @@ def _(combos):
                 dpi=300,
                 constrained_layout=True,
             )
-            for i, c in enumerate(ploidy_combos):
-                color = f"C{i}"
+            for c in ploidy_combos:
                 _ratio, _ratio_lo, _ratio_hi = c["ratios"][_det_key]
-                for b, ls in zip(bin_indices, ("-", "--")):
-                    bin_label = f"u $\\in$ [{left_bins[b]:.2g}, {right_bins[b]:.2g}] M"
+                for j, b in enumerate(bin_indices):
+                    color = f"C{j}"
+                    bin_label = f"u $\\in$ [{left_bins[b]:.2g}, {right_bins[b]:.2g}]"
                     ax.plot(
                         c["Ne"],
                         _ratio[:, b],
                         color=color,
                         lw=1.2,
-                        ls=ls,
                         marker="o",
                         markersize=1,
                         label=f"{c['label']}, {bin_label}",
@@ -137,9 +136,9 @@ def _(combos):
             ax.axvline(10_000, color="k", lw=0.6, ls=":", alpha=0.5)
             ax.set_xscale("log")
             ax.set_yscale("log")
-            ax.set_xlabel(r"$N_e$ (effective population size)")
+            ax.set_xlabel(r"$N_e$")
             ax.set_ylabel(r"Relative error")
-            ax.set_title(f"{ploidy_name}, {det_name}", fontsize="small")
+            # ax.set_title(f"{ploidy_name}, {det_name}", fontsize="small")
             ax.legend(fontsize="x-small")
 
             if mo.app_meta().mode == "script":
