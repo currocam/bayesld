@@ -27,9 +27,9 @@ from bayesld import deterministic, linear_bins, montecarlo
 # Mutation rate is set per Ne so the expected number of segregating sites
 # stays ~constant across the grid. Watterson: S = theta * a_n, with
 # theta = 2 * ploidy * Ne * mu * L.
-TARGET_SEG_SITES = 100_000
+TARGET_SEG_SITES = 1_000_000
 RANDOM_SEED = 9362178
-NUM_REPLICATES = 20
+NUM_REPLICATES = 100
 SMC_PRIME_MODEL = msprime.SMCK(k=1)
 NE_VALUES = np.logspace(np.log10(100), np.log10(100_000), 50)
 
@@ -130,4 +130,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
