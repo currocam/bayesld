@@ -6,7 +6,6 @@
 #     "msprime==1.4.0",
 #     "numpy==2.2.6",
 #     "joblib==1.5.3",
-#     "tqdm==4.67.3",
 # ]
 # ///
 
@@ -17,21 +16,19 @@ import time
 
 import msprime
 import numpy as np
-import tqdm
 from bayesld import deterministic, linear_bins, montecarlo
+
+
+def log(msg):
+    print(msg, flush=True)
+
 
 # --- shared parameters ---
 MUTATION_RATE = RECOMBINATION_RATE = 1e-8
 NUM_SAMPLES = 50
 RANDOM_SEED = 9362178
 NUM_WORKERS = 8
-RTOL = 0.05
-DTWF_DURATION = 200
-
-DTWF_MODEL = [
-    msprime.DiscreteTimeWrightFisher(duration=DTWF_DURATION),
-    msprime.StandardCoalescent(),
-]
+RTOL = 0.1
 
 LEFT_BINS, RIGHT_BINS = linear_bins()
 SEQUENCE_LENGTH = RIGHT_BINS[-1] * 2 / RECOMBINATION_RATE
@@ -160,24 +157,18 @@ MC_KWARGS = dict(
 
 def run_variant(variant, smc_k, seed, scenario_name=""):
     kw = variant["kwargs"]
-    label = variant["label"]
-    tag = f"[{scenario_name} | {label}]"
+    tag = f"[{scenario_name} | {variant['label']}]"
 
     t0 = time.perf_counter()
     pi_det, ld_det = variant["det_fn"](**kw, **DET_KWARGS)
-    tqdm.tqdm.write(f"{tag} det          {time.perf_counter() - t0:7.2f}s")
+    log(f"{tag} det        {time.perf_counter() - t0:7.2f}s")
 
     t0 = time.perf_counter()
     pi_smc, ld_smc = variant["mc_fn"](
         **kw, **MC_KWARGS, random_seed=seed, model=msprime.SMCK(k=smc_k)
     )
-    tqdm.tqdm.write(f"{tag} SMC(k={smc_k})     {time.perf_counter() - t0:7.2f}s")
+    log(f"{tag} SMC(k={smc_k})   {time.perf_counter() - t0:7.2f}s")
 
-    t0 = time.perf_counter()
-    pi_dtwf, ld_dtwf = variant["mc_fn"](
-        **kw, **MC_KWARGS, random_seed=seed + 300, model=DTWF_MODEL
-    )
-    tqdm.tqdm.write(f"{tag} DTWF         {time.perf_counter() - t0:7.2f}s")
     return {
         "label": variant["label"],
         "epochs": variant["epochs"],
@@ -185,8 +176,6 @@ def run_variant(variant, smc_k, seed, scenario_name=""):
         "ld_det": np.asarray(ld_det),
         "pi_smc": np.asarray(pi_smc),
         "ld_smc": np.asarray(ld_smc),
-        "pi_dtwf": np.asarray(pi_dtwf),
-        "ld_dtwf": np.asarray(ld_dtwf),
     }
 
 
@@ -195,9 +184,10 @@ def main():
 
     results = {}
     seed = 0
-    for name, scenario in tqdm.tqdm(SCENARIOS.items(), desc="Scenarios"):
+    for name, scenario in SCENARIOS.items():
+        log(f"=== scenario: {name} ===")
         variants = []
-        for v in tqdm.tqdm(scenario["variants"], desc=name, leave=False):
+        for v in scenario["variants"]:
             variants.append(
                 run_variant(v, scenario["smc_k"], RANDOM_SEED + seed * 1000, name)
             )
@@ -214,12 +204,11 @@ def main():
             "sequence_length": SEQUENCE_LENGTH,
             "num_samples": NUM_SAMPLES,
             "rtol": RTOL,
-            "dtwf_duration": DTWF_DURATION,
         },
     }
     with gzip.open(out_path, "wb") as f:
         pickle.dump(data, f)
-    print(f"Saved to {out_path}")
+    log(f"Saved to {out_path}")
 
 
 if __name__ == "__main__":

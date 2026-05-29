@@ -130,14 +130,12 @@ def _(results, bin_midpoints):
 
         fig_demo = plot_demography(r["variants"], title)
         fig_smc = plot_ld(r["variants"], bin_midpoints, "ld_smc", smc_label, title)
-        fig_dtwf = plot_ld(r["variants"], bin_midpoints, "ld_dtwf", "DTWF", title)
 
         save_panel(fig_demo, f"example_bias_{name}_demography")
         save_panel(fig_smc, f"example_bias_{name}_smc")
-        save_panel(fig_dtwf, f"example_bias_{name}_dtwf")
 
         blocks.append(
-            mo.vstack([mo.md(f"### {title}"), mo.hstack([fig_demo, fig_smc, fig_dtwf])])
+            mo.vstack([mo.md(f"### {title}"), mo.hstack([fig_demo, fig_smc])])
         )
     mo.vstack(blocks)
     return
