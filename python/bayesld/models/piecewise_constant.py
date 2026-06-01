@@ -74,7 +74,7 @@ functions {{
 
 data {{
     int<lower=1> n_bins;
-    int<lower=2> num_windows;
+    int<lower=1> num_windows;
     vector[n_bins] left_bins;
     vector[n_bins] right_bins;
     real<lower=0> mutation_rate;
