@@ -82,6 +82,7 @@ def main():
             strategy="pathfinder",
             model=msprime.SMCK(k=0),
             seed=SEED,
+            num_replicates=50,
         )
         idatas.append(
             model.sample(iter_warmup=6000, iter_sampling=2000, seed=SEED, chains=2)

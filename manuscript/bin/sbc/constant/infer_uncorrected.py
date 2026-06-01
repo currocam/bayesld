@@ -24,6 +24,7 @@ import numpy as np
 from bayesld.models import ConstantDemography
 
 NUM_WORKERS = 8
+SEED = 176387
 
 
 def main():
@@ -55,7 +56,9 @@ def main():
     idatas = []
     for i, (pi, ld) in enumerate(batch["datasets"]):
         model.update_data(diversity=pi, ld=ld)
-        idatas.append(model.sample(iter_warmup=2000, iter_sampling=2000, chains=2))
+        idatas.append(
+            model.sample(iter_warmup=2000, iter_sampling=2000, chains=2, seed=SEED)
+        )
         print(f"  {i + 1}/{len(batch['datasets'])}", file=sys.stderr)
 
     with open(args.output, "wb") as f:
