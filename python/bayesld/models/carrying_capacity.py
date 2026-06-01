@@ -7,9 +7,8 @@ Exponential carrying-capacity demographic inference model.
     Ne(t) = Ne_c * exp(-alpha * (t - t0)) for t0 <= t < t1 (exponential)
     Ne(t) = Ne_a                          for t >= t1    (ancestral constant)
 
-where ``alpha = log_fold_change / (t1 - t0)``.
-
-Uses a single unified Stan program with GP bias-correction always present.
+with ``alpha = log_fold_change / (t1 - t0)`` and
+``log_fold_change = log_Ne_c - log_Ne_a``.
 """
 
 import pathlib
@@ -18,63 +17,50 @@ from typing import Optional
 
 import numpy as np
 
+from . import _surrogate as sg
+
 _STAN_DIR = pathlib.Path(__file__).resolve().parent.parent / "stan"
 _THREADS_OPTS = {"cpp_options": {"STAN_THREADS": "true"}}
 
 _DEFAULT_N_QUAD = 16
-
-DEBUG = False
 
 
 def _default_prior(diversity: np.ndarray, mutation_rate: float) -> str:
     ne_hat = float(np.mean(diversity)) / (4.0 * mutation_rate)
     log_ne_mu = float(np.log(ne_hat))
     return (
-        f"    log_Ne_a ~ normal({log_ne_mu:.4f}, 1.0);\n"
+        f"    log_Ne_c ~ normal({log_ne_mu:.4f}, 1.5);\n"
+        f"    log_Ne_a ~ normal({log_ne_mu:.4f}, 1.5);\n"
         f"    log_t_boundaries[1] ~ normal({np.log(100.0):.4f}, 0.5);\n"
-        f"    log_t_boundaries[2] ~ normal({np.log(200.0):.4f}, 1.0);\n"
-        f"    log_fold_change ~ normal(0, 1.0);"
+        f"    log_t_boundaries[2] ~ normal({np.log(200.0):.4f}, 1.0);"
     )
 
 
 _DEFAULT_PARAMETERS = """\
+    real<offset=log_ne_offset> log_Ne_c;
     real<offset=log_ne_offset> log_Ne_a;
-    ordered[2] log_t_boundaries;
-    real log_fold_change;"""
+    ordered[2] log_t_boundaries;"""
 
 _DEFAULT_TRANSFORMED_PARAMETERS = """\
-    real log_Ne_c = log_Ne_a + log_fold_change;
     real<lower=0> Ne_c = exp(log_Ne_c);
     real<lower=0> Ne_a = exp(log_Ne_a);
     real<lower=0> t0   = exp(log_t_boundaries[1]);
     real<lower=0> t1   = exp(log_t_boundaries[2]);
+    real log_fold_change = log_Ne_c - log_Ne_a;
     real alpha = log_fold_change / (t1 - t0);"""
 
 
 def _generate_stan(
-    prior: str = "    log_Ne_a ~ normal(3, 1.0);\n    log_t_boundaries[1] ~ normal(4.6, 0.5);\n    log_t_boundaries[2] ~ normal(5.3, 1.0);\n    log_fold_change ~ normal(0, 1.0);",
+    prior: str,
     parameters: str = _DEFAULT_PARAMETERS,
     transformed_parameters: str = _DEFAULT_TRANSFORMED_PARAMETERS,
 ) -> str:
-    """Assemble the complete Stan program for the carrying-capacity model.
-
-    Three injection points: ``parameters``, ``transformed_parameters``
-    (injected at top of transformed parameters block), and ``prior``.
-    GP bias-correction blocks are always included.
-    """
+    """Assemble the complete Stan program for the carrying-capacity model."""
     gp_fn = (_STAN_DIR / "functions" / "gpbasisfun_functions.stan").read_text()
     shared_fn = (_STAN_DIR / "functions" / "shared.stan").read_text()
     model_fn = (_STAN_DIR / "functions" / "carrying_capacity.stan").read_text()
 
-    debug_tp = ""
-    debug_model = ""
-    if DEBUG:
-        debug_tp = '    print("Ne_c = ", Ne_c, " Ne_a = ", Ne_a, " t0 = ", t0, " t1 = ", t1, " alpha = ", alpha);'
-        debug_model = """\
-    print("corrected_ld = ", corrected_ld);
-    print("gp_bias_ld = ", gp_bias_ld);"""
-
-    code = f"""\
+    return f"""\
 functions {{
 // ---- gpbasisfun_functions.stan ----
 {gp_fn}
@@ -97,131 +83,43 @@ data {{
     vector[n_quad] gl_nodes;
     vector[n_quad] gl_weights;
 
-    // ── GP surrogate evaluation dataset (LD-bias) ──
-    int<lower=0> n_synthetic;
-    matrix[n_synthetic, n_bins] eval_rel_bias;
-    matrix[n_synthetic, n_bins] eval_eps_rel;
-    real<lower=0> hsgp_c;
-    int<lower=1>  hsgp_m;
-    real<lower=0> gp_alpha_std;
-}}
+{sg.SURROGATE_DATA}}}
 
 transformed data {{
-    real mean_div = mean(pi_array);
-    real<lower=0> sigma_div = sd(pi_array);
-    real<lower=0> sem_div   = sigma_div / sqrt(num_windows);
-
-    vector[n_bins] mean_ld;
-    vector<lower=0>[n_bins] sigma_ld;
-    vector<lower=0>[n_bins] sem_ld;
-    for (b in 1:n_bins) {{
-        mean_ld[b]  = mean(col(ld_mat, b));
-        sigma_ld[b] = sd(col(ld_mat, b));
-        sem_ld[b]   = sigma_ld[b] / sqrt(num_windows);
-    }}
-    real log_ne_offset = log(mean_div / (4.0 * mutation_rate));
-
-    // GP: bin midpoints and standardised r
-    vector[n_bins] bin_midpoints = (left_bins + right_bins) / 2.0;
-    real r_mu  = mean(bin_midpoints);
-    real r_sig = sd(bin_midpoints);
-    vector[n_bins] r_std = (bin_midpoints - r_mu) / r_sig;
-    real L_r = hsgp_c * max(abs(r_std));
-    matrix[n_bins, hsgp_m] PHI_r = PHI(n_bins, hsgp_m, L_r, r_std);
-
-    // Pack per-bin data for map_rect parallelism
-    array[n_bins, 2 + 2 * n_quad] real mr_bin_data;
-    array[n_bins, 1] int mr_bin_int;
-    array[n_bins] vector[0] mr_theta;
-    for (b in 1:n_bins) {{
-        mr_bin_data[b, 1] = left_bins[b];
-        mr_bin_data[b, 2] = right_bins[b];
-        for (k in 1:n_quad) {{
-            mr_bin_data[b, 2 + k] = gl_nodes[k];
-            mr_bin_data[b, 2 + n_quad + k] = gl_weights[k];
-        }}
-        mr_bin_int[b, 1] = n_quad;
-    }}
-}}
+{sg.JOINT_TRANSFORMED_DATA}}}
 
 parameters {{
 {parameters}
-    real<lower=0> gp_rho_r;
-    real<lower=0> gp_alpha;
-    vector[hsgp_m] beta_r;
-}}
+{sg.SURROGATE_PARAMETERS}}}
 
 transformed parameters {{
 {transformed_parameters}
-{debug_tp}
-    vector[hsgp_m] spd_r = diagSPD_EQ(gp_alpha, gp_rho_r, L_r, hsgp_m);
-    vector[n_bins] gp_bias_ld = PHI_r * (spd_r .* beta_r);
+{sg.JOINT_TP_PREFIX}
     real expected_pi = mu_div_carrying_capacity(Ne_c, Ne_a, t0, t1, alpha, mutation_rate,
                                                  n_quad, gl_nodes, gl_weights);
-    vector[5] mr_phi = [Ne_c, Ne_a, t0, t1, alpha]';
     vector[n_bins] approx_expected_ld = correct_ld_finite_sample(
-        map_rect(mu_ld_shard_cc, mr_phi, mr_theta, mr_bin_data, mr_bin_int),
+        mu_ld_carrying_capacity(Ne_c, Ne_a, t0, t1, alpha,
+                                 left_bins, right_bins, n_quad, gl_nodes, gl_weights),
         sample_size
     );
-    vector[n_bins] corrected_ld = approx_expected_ld .* (1.0 + gp_bias_ld);
-}}
+{sg.JOINT_TP_SUFFIX}}}
 
 model {{
-    // --- GP surrogate ---
-    gp_rho_r ~ inv_gamma(5, 5);
-    gp_alpha ~ normal(0, gp_alpha_std);
-    beta_r ~ std_normal();
-    if (n_synthetic > 0) {{
-        to_vector(eval_rel_bias) ~ normal(
-            to_vector(rep_matrix(to_row_vector(gp_bias_ld), n_synthetic)),
-            to_vector(eval_eps_rel));
-    }}
-
-    // --- user prior ---
+{sg.SURROGATE_MODEL}
 {prior}
 
-{debug_model}
-    mean_div ~ normal(expected_pi, sem_div);
-    target += normal_lpdf(mean_ld | corrected_ld, sem_ld) / n_bins;
+    y_obs ~ multi_normal_cholesky(mu_y, L_Sigma);
 }}
 
 generated quantities {{
-    vector[num_windows] log_lik;
-    for (w in 1:num_windows) {{
-        log_lik[w] = normal_lpdf(pi_array[w] | expected_pi, sigma_div)
-                   + normal_lpdf(to_vector(ld_mat[w]) | corrected_ld, sigma_ld) / n_bins;
-    }}
-}}
+{sg.JOINT_GENERATED_QUANTITIES}}}
 """
-    return code
 
 
 class ExponentialCarryingCapacityDemography:
-    """
-    Bayesian inference of Ne under an exponential carrying-capacity model.
+    """Bayesian inference under an exponential carrying-capacity model.
 
     Three-phase demography: recent constant -> exponential -> ancestral constant.
-    alpha = log_fold_change / (t1 - t0).
-
-    Uses a single unified Stan program with GP bias-correction always present.
-
-    Parameters
-    ----------
-    diversity : array-like, shape (num_windows,)
-    ld : array-like, shape (num_windows, num_bins)
-    mutation_rate, recombination_rate : float
-    num_samples : int
-    left_bins, right_bins : array-like, shape (num_bins,)
-    sequence_length : float or None
-    ploidy : int
-    num_workers : int
-    hsgp_c : float
-    hsgp_m : int
-    n_quad : int
-    gp_alpha_std : float
-    prior : str or None
-    parameters : str
-    transformed_parameters : str
     """
 
     def __init__(
@@ -237,9 +135,12 @@ class ExponentialCarryingCapacityDemography:
         ploidy: int = 2,
         num_workers: int = 1,
         hsgp_c: float = 1.5,
-        hsgp_m: int = 10,
+        hsgp_m_u: int = 10,
+        hsgp_m_ld: int = 6,
         n_quad: int = _DEFAULT_N_QUAD,
         gp_alpha_std: float = 0.005,
+        lkj_eta: float = 2.0,
+        log_sigma_y_scale: float = 1.0,
         prior: Optional[str] = None,
         parameters: str = _DEFAULT_PARAMETERS,
         transformed_parameters: str = _DEFAULT_TRANSFORMED_PARAMETERS,
@@ -257,12 +158,13 @@ class ExponentialCarryingCapacityDemography:
         self._right_bins = np.asarray(right_bins, dtype=float)
         self._num_workers = int(num_workers)
         self._hsgp_c = float(hsgp_c)
-        self._hsgp_m = int(hsgp_m)
+        self._hsgp_m_u = int(hsgp_m_u)
+        self._hsgp_m_ld = int(hsgp_m_ld)
         self._gp_alpha_std = float(gp_alpha_std)
+        self._lkj_eta = float(lkj_eta)
+        self._log_sigma_y_scale = float(log_sigma_y_scale)
 
-        gl_nodes, gl_weights = np.polynomial.legendre.leggauss(n_quad)
-        self._gl_nodes = gl_nodes
-        self._gl_weights = gl_weights
+        self._gl_nodes, self._gl_weights = np.polynomial.legendre.leggauss(n_quad)
 
         self._synthetic_points: list[dict] = []
 
@@ -280,9 +182,7 @@ class ExponentialCarryingCapacityDemography:
         )
         self._model = self._compile(self._stan_code)
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Compilation
-    # ──────────────────────────────────────────────────────────────────────
+    # ─── Compilation ──────────────────────────────────────────────────────────
 
     def _compile(self, code: str):
         import cmdstanpy
@@ -291,9 +191,7 @@ class ExponentialCarryingCapacityDemography:
         stan_file.write_text(code)
         return cmdstanpy.CmdStanModel(stan_file=str(stan_file), **_THREADS_OPTS)
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Primitives
-    # ──────────────────────────────────────────────────────────────────────
+    # ─── Primitives ───────────────────────────────────────────────────────────
 
     def get_stan_code(self) -> str:
         return self._stan_code
@@ -303,7 +201,8 @@ class ExponentialCarryingCapacityDemography:
         return self._model
 
     def stan_data(self) -> dict:
-        n_syn = len(self._synthetic_points)
+        log_ld_mu, log_ld_sig = sg.compute_standardization(self._ld)
+        log_sigma_y_loc = sg.compute_log_sigma_y_loc(self._diversity, self._ld)
         data = {
             "n_bins": int(len(self._left_bins)),
             "num_windows": int(len(self._diversity)),
@@ -316,27 +215,25 @@ class ExponentialCarryingCapacityDemography:
             "n_quad": len(self._gl_nodes),
             "gl_nodes": self._gl_nodes,
             "gl_weights": self._gl_weights,
-            "n_synthetic": n_syn,
             "hsgp_c": self._hsgp_c,
-            "hsgp_m": self._hsgp_m,
+            "hsgp_m_u": self._hsgp_m_u,
+            "hsgp_m_ld": self._hsgp_m_ld,
             "gp_alpha_std": self._gp_alpha_std,
+            "log_ld_mu": log_ld_mu,
+            "log_ld_sig": log_ld_sig,
+            "lkj_eta": self._lkj_eta,
+            "log_sigma_y_loc": log_sigma_y_loc,
+            "log_sigma_y_scale": self._log_sigma_y_scale
+            * np.ones(len(self._left_bins) + 1),
         }
-        if n_syn > 0:
-            data["eval_rel_bias"] = np.array(
-                [p["rel_bias"] for p in self._synthetic_points]
+        data.update(
+            sg.surrogate_payload(
+                self._synthetic_points, self._left_bins, self._right_bins
             )
-            data["eval_eps_rel"] = np.array(
-                [p["eps_rel"] for p in self._synthetic_points]
-            )
-        else:
-            n_bins = int(len(self._left_bins))
-            data["eval_rel_bias"] = np.empty((0, n_bins))
-            data["eval_eps_rel"] = np.empty((0, n_bins))
+        )
         return data
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Data and prior mutation
-    # ──────────────────────────────────────────────────────────────────────
+    # ─── Data and prior mutation ──────────────────────────────────────────────
 
     def update_data(
         self,
@@ -366,6 +263,7 @@ class ExponentialCarryingCapacityDemography:
         parameters: Optional[str] = None,
         transformed_parameters: Optional[str] = None,
         gp_alpha_std: Optional[float] = None,
+        lkj_eta: Optional[float] = None,
     ) -> None:
         needs_recompile = False
         if prior is not None and prior != self._prior:
@@ -382,6 +280,8 @@ class ExponentialCarryingCapacityDemography:
             needs_recompile = True
         if gp_alpha_std is not None:
             self._gp_alpha_std = float(gp_alpha_std)
+        if lkj_eta is not None:
+            self._lkj_eta = float(lkj_eta)
 
         if needs_recompile:
             self._stan_code = _generate_stan(
@@ -389,24 +289,18 @@ class ExponentialCarryingCapacityDemography:
             )
             self._model = self._compile(self._stan_code)
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Synthetic bias data
-    # ──────────────────────────────────────────────────────────────────────
+    # ─── Synthetic bias data ──────────────────────────────────────────────────
 
     @property
     def synthetic_points(self) -> list[dict]:
         return list(self._synthetic_points)
 
     def add_synthetic_points(self, points: list[dict]) -> None:
-        required = {"rel_bias", "eps_rel"}
         for p in points:
-            if not required.issubset(p):
-                raise ValueError(f"Each point must have keys {required}; got {set(p)}")
+            sg.validate_synthetic_point(p)
         self._synthetic_points.extend(points)
 
-    # ──────────────────────────────────────────────────────────────────────
-    # MC evaluation (internal)
-    # ──────────────────────────────────────────────────────────────────────
+    # ─── MC evaluation ────────────────────────────────────────────────────────
 
     def _mc_eval(
         self,
@@ -417,6 +311,7 @@ class ExponentialCarryingCapacityDemography:
         alpha: float,
         mc_seed: int,
         rtol: float = 0.01,
+        num_replicates: Optional[int] = None,
         model=None,
     ) -> dict:
         import msprime
@@ -440,7 +335,19 @@ class ExponentialCarryingCapacityDemography:
             ploidy=self._ploidy,
         )
         det_ld = np.asarray(det_ld_raw)
-        _, mc_ld_reps = montecarlo.expected_exponential_carrying_capacity(
+
+        mc_kwargs = dict(
+            random_seed=mc_seed,
+            ploidy=self._ploidy,
+            model=model,
+            num_workers=self._num_workers,
+        )
+        if num_replicates is not None:
+            mc_kwargs["num_replicates"] = int(num_replicates)
+        else:
+            mc_kwargs["rtol"] = rtol
+
+        mc_pi_reps, mc_ld_reps = montecarlo.expected_exponential_carrying_capacity(
             ne_c,
             ne_a,
             t0,
@@ -452,32 +359,24 @@ class ExponentialCarryingCapacityDemography:
             self._recombination_rate,
             self._sequence_length,
             self._num_samples,
-            random_seed=mc_seed,
-            ploidy=self._ploidy,
-            model=model,
-            num_workers=self._num_workers,
-            rtol=rtol,
+            **mc_kwargs,
         )
+        mc_pi_reps = np.asarray(mc_pi_reps)
         mc_ld_reps = np.asarray(mc_ld_reps)
         assert len(mc_ld_reps) > 1, (
             f"MC evaluation returned only {len(mc_ld_reps)} replicate(s); "
             "need at least 2 for a meaningful SE estimate."
         )
-        mc_ld_rel = mc_ld_reps / det_ld - 1.0
-        return {
-            "rel_bias": mc_ld_rel.mean(axis=0),
-            "eps_rel": mc_ld_rel.std(axis=0, ddof=1) / np.sqrt(len(mc_ld_reps)),
-        }
+        return sg.make_synthetic_point(det_ld, mc_pi_reps, mc_ld_reps)
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Active learning
-    # ──────────────────────────────────────────────────────────────────────
+    # ─── Active learning ──────────────────────────────────────────────────────
 
     def active_learn_bias(
         self,
         n_points_per_iter: int = 5,
         n_iter: int = 5,
         max_tolerance: float = 0.1,
+        num_replicates: Optional[int] = None,
         strategy: str = "pathfinder",
         model=None,
         seed: Optional[int] = None,
@@ -509,6 +408,13 @@ class ExponentialCarryingCapacityDemography:
             )
             for i in iterator:
                 mc_seed = int(rng.integers(2**31))
+                iterator.set_postfix_str(
+                    f"Ne_c={float(draws['Ne_c'][i]):,.0f} "
+                    f"Ne_a={float(draws['Ne_a'][i]):,.0f} "
+                    f"t0={float(draws['t0'][i]):.1f} "
+                    f"t1={float(draws['t1'][i]):.1f} "
+                    f"alpha={float(draws['alpha'][i]):.3g}"
+                )
                 self._synthetic_points.append(
                     self._mc_eval(
                         float(draws["Ne_c"][i]),
@@ -518,6 +424,7 @@ class ExponentialCarryingCapacityDemography:
                         float(draws["alpha"][i]),
                         mc_seed,
                         rtol=max_tolerance,
+                        num_replicates=num_replicates,
                         model=model,
                     )
                 )
@@ -536,18 +443,17 @@ class ExponentialCarryingCapacityDemography:
             seed=int(rng.integers(10_000)),
             num_threads=self._num_workers,
             show_console=False,
+            inits=0.5,
         )
         return {
-            "Ne_c": np.asarray(pf.stan_variable("Ne_c"))[:n_draws],
-            "Ne_a": np.asarray(pf.stan_variable("Ne_a"))[:n_draws],
-            "t0": np.asarray(pf.stan_variable("t0"))[:n_draws],
-            "t1": np.asarray(pf.stan_variable("t1"))[:n_draws],
-            "alpha": np.asarray(pf.stan_variable("alpha"))[:n_draws],
+            "Ne_c": np.atleast_1d(np.asarray(pf.stan_variable("Ne_c")))[:n_draws],
+            "Ne_a": np.atleast_1d(np.asarray(pf.stan_variable("Ne_a")))[:n_draws],
+            "t0": np.atleast_1d(np.asarray(pf.stan_variable("t0")))[:n_draws],
+            "t1": np.atleast_1d(np.asarray(pf.stan_variable("t1")))[:n_draws],
+            "alpha": np.atleast_1d(np.asarray(pf.stan_variable("alpha")))[:n_draws],
         }
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Happy path
-    # ──────────────────────────────────────────────────────────────────────
+    # ─── Happy path ───────────────────────────────────────────────────────────
 
     def sample(self, chains: int = 2, **kwargs):
         import arviz
@@ -555,6 +461,7 @@ class ExponentialCarryingCapacityDemography:
 
         kwargs.setdefault("threads_per_chain", self._num_workers)
         kwargs.setdefault("show_console", False)
+        kwargs.setdefault("inits", 0.5)
         data = self.stan_data()
 
         fits = []

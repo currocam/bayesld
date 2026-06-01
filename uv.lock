@@ -430,6 +430,7 @@ dependencies = [
     { name = "jax", version = "0.10.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "joblib" },
     { name = "marimo" },
+    { name = "matplotlib" },
     { name = "matplotlib-label-lines" },
     { name = "msprime", version = "1.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "msprime", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -441,6 +442,8 @@ dependencies = [
     { name = "tqdm" },
     { name = "tskit", version = "1.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "tskit", version = "1.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "xarray", version = "2024.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "xarray", version = "2026.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 
 [package.optional-dependencies]
@@ -470,6 +473,7 @@ requires-dist = [
     { name = "jax", specifier = ">=0.4.13" },
     { name = "joblib", specifier = ">=1.0.0" },
     { name = "marimo", specifier = ">=0.20.4" },
+    { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "matplotlib-label-lines", specifier = ">=0.8.1" },
     { name = "msprime", specifier = ">=1.4.0" },
     { name = "msprime", marker = "extra == 'tests'", specifier = ">=1.0" },
@@ -480,6 +484,7 @@ requires-dist = [
     { name = "stdpopsim", specifier = ">=0.3.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "tskit", specifier = ">=0.5.7" },
+    { name = "xarray", specifier = ">=2024.9.0" },
 ]
 provides-extras = ["tests"]
 

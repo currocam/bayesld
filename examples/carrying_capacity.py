@@ -37,7 +37,7 @@ def _(mo):
         10, 50_000, value=100, step=10, label="Ne_c (contemporary, truth)"
     )
     ne_a_slider = mo.ui.slider(
-        10, 50_000, value=200, step=10, label="Ne_a (ancestral, truth)"
+        10, 50_000, value=2000, step=10, label="Ne_a (ancestral, truth)"
     )
     t0_slider = mo.ui.slider(
         1, 200, value=20, step=1, label="t0 (start exponential phase, gen ago)"
@@ -175,10 +175,10 @@ def _(
         sequence_length=window_length,
         num_workers=8,
         prior=(
+            f"    log_Ne_c ~ normal({np.log(5000.0):.4f}, 1.5);\n"
             f"    log_Ne_a ~ normal({np.log(5000.0):.4f}, 1.5);\n"
             f"    log_t_boundaries[1] ~ normal({np.log(50.0):.4f}, 1.5);\n"
-            f"    log_t_boundaries[2] ~ normal({np.log(200.0):.4f}, 1.5);\n"
-            f"    log_fold_change ~ normal(0, 1.5);"
+            f"    log_t_boundaries[2] ~ normal({np.log(200.0):.4f}, 1.5);"
         ),
     )
     mo.md("Model compiled.")
@@ -205,7 +205,8 @@ def _(mo, model):
         model.active_learn_bias(
             n_points_per_iter=5 * 4,
             n_iter=5 * 4,
-            max_tolerance=0.1,
+            #max_tolerance=0.1,
+            num_replicates=20,
             strategy="pathfinder",
             seed=41,
         )
@@ -390,7 +391,7 @@ def _(
     )
 
     # Baseline
-    base_ld = np.array(idata_baseline["posterior"].ds["corrected_ld"]).reshape(
+    base_ld = np.array(idata_baseline["posterior"].ds["corrected_expected_ld"]).reshape(
         -1, len(bin_mid)
     )
     base_lo, base_hi = np.percentile(base_ld, [5, 95], axis=0)
@@ -400,7 +401,7 @@ def _(
     )
 
     # Corrected
-    corr_ld = np.array(idata_corrected["posterior"].ds["corrected_ld"]).reshape(
+    corr_ld = np.array(idata_corrected["posterior"].ds["corrected_expected_ld"]).reshape(
         -1, len(bin_mid)
     )
     corr_lo, corr_hi = np.percentile(corr_ld, [5, 95], axis=0)

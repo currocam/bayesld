@@ -275,8 +275,8 @@ def _(
         2, 1, figsize=(7, 6), sharex=True, gridspec_kw={"height_ratios": [3, 1]}
     )
 
-    # Baseline corrected_ld (GP near zero)
-    base_ld = np.array(idata_baseline["posterior"].ds["corrected_ld"]).reshape(
+    # Baseline corrected_expected_ld (GP near zero)
+    base_ld = np.array(idata_baseline["posterior"].ds["corrected_expected_ld"]).reshape(
         -1, len(bin_mid)
     )
     base_lo, base_hi = np.percentile(base_ld, [5, 95], axis=0)
@@ -286,7 +286,7 @@ def _(
     )
 
     # Corrected
-    corr_ld = np.array(idata_corrected["posterior"].ds["corrected_ld"]).reshape(
+    corr_ld = np.array(idata_corrected["posterior"].ds["corrected_expected_ld"]).reshape(
         -1, len(bin_mid)
     )
     corr_lo, corr_hi = np.percentile(corr_ld, [5, 95], axis=0)

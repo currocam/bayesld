@@ -161,9 +161,9 @@ def _(
         sequence_length=window_length,
         num_workers=8,
         prior=(
+            f"    log_Ne_c ~ normal({np.log(5000.0):.4f}, 1.5);\n"
             f"    log_Ne_a ~ normal({np.log(5000.0):.4f}, 1.5);\n"
-            f"    log_t0   ~ normal({np.log(50.0):.4f}, 1.5);\n"
-            f"    log_fold_change ~ normal(0, 1.5);"
+            f"    log_t0   ~ normal({np.log(50.0):.4f}, 1.5);"
         ),
     )
     mo.md("Model compiled.")
@@ -360,7 +360,7 @@ def _(
     )
 
     # Baseline
-    base_ld = np.array(idata_baseline["posterior"].ds["corrected_ld"]).reshape(
+    base_ld = np.array(idata_baseline["posterior"].ds["corrected_expected_ld"]).reshape(
         -1, len(bin_mid)
     )
     base_lo, base_hi = np.percentile(base_ld, [5, 95], axis=0)
@@ -370,7 +370,7 @@ def _(
     )
 
     # Corrected
-    corr_ld = np.array(idata_corrected["posterior"].ds["corrected_ld"]).reshape(
+    corr_ld = np.array(idata_corrected["posterior"].ds["corrected_expected_ld"]).reshape(
         -1, len(bin_mid)
     )
     corr_lo, corr_hi = np.percentile(corr_ld, [5, 95], axis=0)
