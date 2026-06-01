@@ -181,23 +181,20 @@ data {
     real<lower=0> sigma_log_ne_prior;
     real mu_log_t0_prior;
     real<lower=0> sigma_log_t0_prior;
-
+    // Joint MVN noise prior (matches corrected model's likelihood scaffold)
+    real<lower=0> lkj_eta;
+    vector[n_bins + 1] log_sigma_y_loc;
+    vector<lower=0>[n_bins + 1] log_sigma_y_scale;
 }
 
 transformed data {
-    real mean_div = mean(pi_array);
-    real<lower=0> sigma_div = sd(pi_array);
-    real<lower=0> sem_div   = sigma_div / sqrt(num_windows);
-
-    vector[n_bins] mean_ld;
-    vector<lower=0>[n_bins] sigma_ld;
-    vector<lower=0>[n_bins] sem_ld;
-    for (b in 1:n_bins) {
-        mean_ld[b]  = mean(col(ld_mat, b));
-        sigma_ld[b] = sd(col(ld_mat, b));
-        sem_ld[b]   = sigma_ld[b] / sqrt(num_windows);
+    int D = n_bins + 1;
+    array[num_windows] vector[D] y_obs;
+    for (w in 1:num_windows) {
+        y_obs[w, 1] = pi_array[w];
+        for (b in 1:n_bins) y_obs[w, b + 1] = ld_mat[w, b];
     }
-    real log_ne_offset = log(mean_div / (4.0 * mutation_rate));
+    real log_ne_offset = log(mean(pi_array) / (4.0 * mutation_rate));
 
     // Pack per-bin data for map_rect parallelism
     array[n_bins, 2 + 2 * n_quad] real mr_bin_data;
@@ -218,6 +215,8 @@ parameters {
     real<offset=log_ne_offset> log_Ne_c;
     real<offset=log_ne_offset> log_Ne_a;
     real log_t0;
+    vector[n_bins + 1] log_sigma_y;
+    cholesky_factor_corr[n_bins + 1] L_Omega;
 }
 
 transformed parameters {
@@ -233,23 +232,26 @@ transformed parameters {
         map_rect(mu_ld_shard_pe, mr_phi, mr_theta, mr_bin_data, mr_bin_int),
         sample_size
     );
+    vector[n_bins + 1] mu_y;
+    mu_y[1] = expected_pi;
+    for (b in 1:n_bins) mu_y[b + 1] = approx_expected_ld[b];
+    vector<lower=0>[n_bins + 1] sigma_y = exp(log_sigma_y);
+    matrix[n_bins + 1, n_bins + 1] L_Sigma = diag_pre_multiply(sigma_y, L_Omega);
 }
 
 model {
-    // --- user prior ---
     log_Ne_c ~ normal(mu_log_ne1_prior, sigma_log_ne_prior);
     log_Ne_a ~ normal(mu_log_ne2_prior, sigma_log_ne_prior);
     log_t0   ~ normal(mu_log_t0_prior, sigma_log_t0_prior);
-
-
-    mean_div ~ normal(expected_pi, sem_div);
-    target += normal_lpdf(mean_ld | approx_expected_ld, sem_ld) / n_bins;
+    L_Omega ~ lkj_corr_cholesky(lkj_eta);
+    log_sigma_y ~ normal(log_sigma_y_loc, log_sigma_y_scale);
+    y_obs ~ multi_normal_cholesky(mu_y, L_Sigma);
 }
 
 generated quantities {
     vector[num_windows] log_lik;
     for (w in 1:num_windows) {
-        log_lik[w] = normal_lpdf(pi_array[w] | expected_pi, sigma_div)
-                   + normal_lpdf(to_vector(ld_mat[w]) | approx_expected_ld, sigma_ld) / n_bins;
+        log_lik[w] = multi_normal_cholesky_lpdf(y_obs[w] | mu_y, L_Sigma);
     }
+    matrix[n_bins + 1, n_bins + 1] Omega = multiply_lower_tri_self_transpose(L_Omega);
 }

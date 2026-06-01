@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "bayesld @ git+https://github.com/currocam/bayesld.git@8e48ea0",
+#     "bayesld @ git+https://github.com/currocam/bayesld.git@152060c",
 #     "numpy",
 # ]
 # ///
@@ -47,8 +47,9 @@ def main():
     n_quad = 16
     gl_nodes, gl_weights = np.polynomial.legendre.leggauss(n_quad)
 
+    n_bins = int(len(left_bins))
     base_data = {
-        "n_bins": int(len(left_bins)),
+        "n_bins": n_bins,
         "left_bins": left_bins,
         "right_bins": right_bins,
         "mutation_rate": mutation_rate,
@@ -63,15 +64,22 @@ def main():
         "sigma_log_ne_prior": prior["prior_sigma_ne"],
         "mu_log_t0_prior": np.log(prior["prior_t0"]),
         "sigma_log_t0_prior": prior["prior_sigma_t0"],
+        # Joint MVN noise hyperparameters (match corrected model defaults)
+        "lkj_eta": 2.0,
+        "log_sigma_y_scale": np.ones(n_bins + 1),
     }
 
     idatas = []
     for i, (pi, ld) in enumerate(batch["datasets"]):
+        emp_sd = np.concatenate(
+            [[float(np.std(pi, ddof=1))], np.std(ld, axis=0, ddof=1)]
+        )
         data = {
             **base_data,
             "num_windows": int(len(pi)),
             "pi_array": pi,
             "ld_mat": ld,
+            "log_sigma_y_loc": np.log(emp_sd),
         }
         fit = model.sample(
             data=data,
