@@ -22,22 +22,41 @@ process SBC_CONSTANT_SIMULATE {
     """
 }
 
-process SBC_CONSTANT_INFER_CORRECTED {
+process SBC_CONSTANT_LEARN_CORRECTED {
     label 'inference'
 
     input:
-    tuple val(experiment), val(batch_idx), path(batch_pkl)
+    tuple val(experiment), val(batch_idx), val(ds_idx), path(batch_pkl)
 
     output:
-    tuple val(experiment.name), path("corrected_${experiment.name}_${batch_idx}.pkl")
+    tuple val(experiment.name), path("learn_${experiment.name}_${tag}.pkl")
+
+    script:
+    tag = String.format("%03d_%03d", batch_idx, ds_idx)
+    """
+    ${projectDir}/bin/sbc/constant/learn_corrected.py \
+        ${batch_pkl} \
+        ${ds_idx} \
+        learn_${experiment.name}_${tag}.pkl \
+        --n-points-per-iter ${experiment.n_points_per_iter} \
+        --n-iter            ${experiment.n_iter}
+    """
+}
+
+process SBC_CONSTANT_SAMPLE_CORRECTED {
+    label 'sampling'
+
+    input:
+    tuple val(name), path(learn_pkl)
+
+    output:
+    tuple val(name), path("corrected_${learn_pkl.baseName - ~/^learn_/}.pkl")
 
     script:
     """
-    ${projectDir}/bin/sbc/constant/infer_corrected.py \
-        ${batch_pkl} \
-        corrected_${experiment.name}_${batch_idx}.pkl \
-        --n-points-per-iter ${experiment.n_points_per_iter} \
-        --n-iter            ${experiment.n_iter}
+    ${projectDir}/bin/sbc/constant/sample_corrected.py \
+        ${learn_pkl} \
+        corrected_${learn_pkl.baseName - ~/^learn_/}.pkl
     """
 }
 
@@ -65,7 +84,7 @@ process SBC_CONSTANT_COLLECT {
     publishDir "${params.sbc_results_dir}/constant", mode: 'copy'
 
     input:
-    tuple val(name), path(batch_pkls), path(corrected_pkls), path(nobias_pkls)
+    tuple val(name), path(batch_pkls), path(learn_pkls), path(corrected_pkls), path(nobias_pkls)
 
     output:
     path "${name}.pkl"
@@ -74,9 +93,10 @@ process SBC_CONSTANT_COLLECT {
     """
     ${projectDir}/bin/sbc/collect.py \
         ${name}.pkl \
-        --batches     ${batch_pkls} \
-        --corrected   ${corrected_pkls} \
-        --no-bias     ${nobias_pkls}
+        --batches   ${batch_pkls} \
+        --learn     ${learn_pkls} \
+        --corrected ${corrected_pkls} \
+        --no-bias   ${nobias_pkls}
     """
 }
 
@@ -87,13 +107,19 @@ workflow SBC_CONSTANT {
             .combine(Channel.of(0..<params.sbc_n_batches))
     )
 
-    SBC_CONSTANT_INFER_CORRECTED(SBC_CONSTANT_SIMULATE.out)
+    sim_per_ds = SBC_CONSTANT_SIMULATE.out.flatMap { exp, batch_idx, pkl ->
+        (0..<exp.batch_size).collect { ds_idx -> tuple(exp, batch_idx, ds_idx, pkl) }
+    }
+
+    SBC_CONSTANT_LEARN_CORRECTED(sim_per_ds)
+    SBC_CONSTANT_SAMPLE_CORRECTED(SBC_CONSTANT_LEARN_CORRECTED.out)
     SBC_CONSTANT_INFER_NO_BIAS(SBC_CONSTANT_SIMULATE.out)
 
     SBC_CONSTANT_COLLECT(
         SBC_CONSTANT_SIMULATE.out
             .map { experiment, idx, pkl -> [experiment.name, pkl] }.groupTuple()
-            .join(SBC_CONSTANT_INFER_CORRECTED.out.groupTuple())
+            .join(SBC_CONSTANT_LEARN_CORRECTED.out.groupTuple())
+            .join(SBC_CONSTANT_SAMPLE_CORRECTED.out.groupTuple())
             .join(SBC_CONSTANT_INFER_NO_BIAS.out.groupTuple())
     )
 
@@ -145,22 +171,41 @@ process SBC_PIECEWISE_CONSTANT_SIMULATE {
     """
 }
 
-process SBC_PIECEWISE_CONSTANT_INFER_CORRECTED {
+process SBC_PIECEWISE_CONSTANT_LEARN_CORRECTED {
     label 'inference'
 
     input:
-    tuple val(experiment), val(batch_idx), path(batch_pkl)
+    tuple val(experiment), val(batch_idx), val(ds_idx), path(batch_pkl)
 
     output:
-    tuple val(experiment.name), path("corrected_${experiment.name}_${batch_idx}.pkl")
+    tuple val(experiment.name), path("learn_${experiment.name}_${tag}.pkl")
+
+    script:
+    tag = String.format("%03d_%03d", batch_idx, ds_idx)
+    """
+    ${projectDir}/bin/sbc/piecewise_constant/learn_corrected.py \
+        ${batch_pkl} \
+        ${ds_idx} \
+        learn_${experiment.name}_${tag}.pkl \
+        --n-points-per-iter ${experiment.n_points_per_iter} \
+        --n-iter            ${experiment.n_iter}
+    """
+}
+
+process SBC_PIECEWISE_CONSTANT_SAMPLE_CORRECTED {
+    label 'sampling'
+
+    input:
+    tuple val(name), path(learn_pkl)
+
+    output:
+    tuple val(name), path("corrected_${learn_pkl.baseName - ~/^learn_/}.pkl")
 
     script:
     """
-    ${projectDir}/bin/sbc/piecewise_constant/infer_corrected.py \
-        ${batch_pkl} \
-        corrected_${experiment.name}_${batch_idx}.pkl \
-        --n-points-per-iter ${experiment.n_points_per_iter} \
-        --n-iter            ${experiment.n_iter}
+    ${projectDir}/bin/sbc/piecewise_constant/sample_corrected.py \
+        ${learn_pkl} \
+        corrected_${learn_pkl.baseName - ~/^learn_/}.pkl
     """
 }
 
@@ -188,7 +233,7 @@ process SBC_PIECEWISE_CONSTANT_COLLECT {
     publishDir "${params.sbc_results_dir}/piecewise_constant", mode: 'copy'
 
     input:
-    tuple val(name), path(batch_pkls), path(corrected_pkls), path(nobias_pkls)
+    tuple val(name), path(batch_pkls), path(learn_pkls), path(corrected_pkls), path(nobias_pkls)
 
     output:
     path "${name}.pkl"
@@ -197,9 +242,10 @@ process SBC_PIECEWISE_CONSTANT_COLLECT {
     """
     ${projectDir}/bin/sbc/collect.py \
         ${name}.pkl \
-        --batches     ${batch_pkls} \
-        --corrected   ${corrected_pkls} \
-        --no-bias     ${nobias_pkls}
+        --batches   ${batch_pkls} \
+        --learn     ${learn_pkls} \
+        --corrected ${corrected_pkls} \
+        --no-bias   ${nobias_pkls}
     """
 }
 
@@ -210,13 +256,19 @@ workflow SBC_PIECEWISE_CONSTANT {
             .combine(Channel.of(0..<params.sbc_n_batches))
     )
 
-    SBC_PIECEWISE_CONSTANT_INFER_CORRECTED(SBC_PIECEWISE_CONSTANT_SIMULATE.out)
+    sim_per_ds = SBC_PIECEWISE_CONSTANT_SIMULATE.out.flatMap { exp, batch_idx, pkl ->
+        (0..<exp.batch_size).collect { ds_idx -> tuple(exp, batch_idx, ds_idx, pkl) }
+    }
+
+    SBC_PIECEWISE_CONSTANT_LEARN_CORRECTED(sim_per_ds)
+    SBC_PIECEWISE_CONSTANT_SAMPLE_CORRECTED(SBC_PIECEWISE_CONSTANT_LEARN_CORRECTED.out)
     SBC_PIECEWISE_CONSTANT_INFER_NO_BIAS(SBC_PIECEWISE_CONSTANT_SIMULATE.out)
 
     SBC_PIECEWISE_CONSTANT_COLLECT(
         SBC_PIECEWISE_CONSTANT_SIMULATE.out
             .map { experiment, idx, pkl -> [experiment.name, pkl] }.groupTuple()
-            .join(SBC_PIECEWISE_CONSTANT_INFER_CORRECTED.out.groupTuple())
+            .join(SBC_PIECEWISE_CONSTANT_LEARN_CORRECTED.out.groupTuple())
+            .join(SBC_PIECEWISE_CONSTANT_SAMPLE_CORRECTED.out.groupTuple())
             .join(SBC_PIECEWISE_CONSTANT_INFER_NO_BIAS.out.groupTuple())
     )
 
@@ -251,22 +303,41 @@ process SBC_PIECEWISE_EXPONENTIAL_SIMULATE {
     """
 }
 
-process SBC_PIECEWISE_EXPONENTIAL_INFER_CORRECTED {
+process SBC_PIECEWISE_EXPONENTIAL_LEARN_CORRECTED {
     label 'inference'
 
     input:
-    tuple val(experiment), val(batch_idx), path(batch_pkl)
+    tuple val(experiment), val(batch_idx), val(ds_idx), path(batch_pkl)
 
     output:
-    tuple val(experiment.name), path("corrected_${experiment.name}_${batch_idx}.pkl")
+    tuple val(experiment.name), path("learn_${experiment.name}_${tag}.pkl")
+
+    script:
+    tag = String.format("%03d_%03d", batch_idx, ds_idx)
+    """
+    ${projectDir}/bin/sbc/piecewise_exponential/learn_corrected.py \
+        ${batch_pkl} \
+        ${ds_idx} \
+        learn_${experiment.name}_${tag}.pkl \
+        --n-points-per-iter ${experiment.n_points_per_iter} \
+        --n-iter            ${experiment.n_iter}
+    """
+}
+
+process SBC_PIECEWISE_EXPONENTIAL_SAMPLE_CORRECTED {
+    label 'sampling'
+
+    input:
+    tuple val(name), path(learn_pkl)
+
+    output:
+    tuple val(name), path("corrected_${learn_pkl.baseName - ~/^learn_/}.pkl")
 
     script:
     """
-    ${projectDir}/bin/sbc/piecewise_exponential/infer_corrected.py \
-        ${batch_pkl} \
-        corrected_${experiment.name}_${batch_idx}.pkl \
-        --n-points-per-iter ${experiment.n_points_per_iter} \
-        --n-iter            ${experiment.n_iter}
+    ${projectDir}/bin/sbc/piecewise_exponential/sample_corrected.py \
+        ${learn_pkl} \
+        corrected_${learn_pkl.baseName - ~/^learn_/}.pkl
     """
 }
 
@@ -294,7 +365,7 @@ process SBC_PIECEWISE_EXPONENTIAL_COLLECT {
     publishDir "${params.sbc_results_dir}/piecewise_exponential", mode: 'copy'
 
     input:
-    tuple val(name), path(batch_pkls), path(corrected_pkls), path(nobias_pkls)
+    tuple val(name), path(batch_pkls), path(learn_pkls), path(corrected_pkls), path(nobias_pkls)
 
     output:
     path "${name}.pkl"
@@ -303,9 +374,10 @@ process SBC_PIECEWISE_EXPONENTIAL_COLLECT {
     """
     ${projectDir}/bin/sbc/collect.py \
         ${name}.pkl \
-        --batches     ${batch_pkls} \
-        --corrected   ${corrected_pkls} \
-        --no-bias     ${nobias_pkls}
+        --batches   ${batch_pkls} \
+        --learn     ${learn_pkls} \
+        --corrected ${corrected_pkls} \
+        --no-bias   ${nobias_pkls}
     """
 }
 
@@ -316,13 +388,19 @@ workflow SBC_PIECEWISE_EXPONENTIAL {
             .combine(Channel.of(0..<params.sbc_n_batches))
     )
 
-    SBC_PIECEWISE_EXPONENTIAL_INFER_CORRECTED(SBC_PIECEWISE_EXPONENTIAL_SIMULATE.out)
+    sim_per_ds = SBC_PIECEWISE_EXPONENTIAL_SIMULATE.out.flatMap { exp, batch_idx, pkl ->
+        (0..<exp.batch_size).collect { ds_idx -> tuple(exp, batch_idx, ds_idx, pkl) }
+    }
+
+    SBC_PIECEWISE_EXPONENTIAL_LEARN_CORRECTED(sim_per_ds)
+    SBC_PIECEWISE_EXPONENTIAL_SAMPLE_CORRECTED(SBC_PIECEWISE_EXPONENTIAL_LEARN_CORRECTED.out)
     SBC_PIECEWISE_EXPONENTIAL_INFER_NO_BIAS(SBC_PIECEWISE_EXPONENTIAL_SIMULATE.out)
 
     SBC_PIECEWISE_EXPONENTIAL_COLLECT(
         SBC_PIECEWISE_EXPONENTIAL_SIMULATE.out
             .map { experiment, idx, pkl -> [experiment.name, pkl] }.groupTuple()
-            .join(SBC_PIECEWISE_EXPONENTIAL_INFER_CORRECTED.out.groupTuple())
+            .join(SBC_PIECEWISE_EXPONENTIAL_LEARN_CORRECTED.out.groupTuple())
+            .join(SBC_PIECEWISE_EXPONENTIAL_SAMPLE_CORRECTED.out.groupTuple())
             .join(SBC_PIECEWISE_EXPONENTIAL_INFER_NO_BIAS.out.groupTuple())
     )
 
