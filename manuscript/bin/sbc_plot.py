@@ -117,7 +117,6 @@ def _(data, method, scenario_name):
 
     groups = {
         "approximate": "idatas_no_bias",
-        "uncorrected": "idatas_uncorrected",
         "corrected": "idatas_corrected",
     }
 
