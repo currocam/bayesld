@@ -1,36 +1,39 @@
 """Shared Stan blocks and Python helpers for the GP-surrogate likelihood.
 
 * LKJ-Cholesky correlation prior + log-Normal marginal sd on Sigma (D = n_bins+1)
-* 2D HSGP over (u, log(det_ld)) for the relative LD bias
-* Wishart sufficient-statistic surrogate that pools sample covariances from MC
-  evaluations at synthetic theta points.
+* 2D HSGP over (u, log(det_ld)) for the relative LD bias on the mean
+* Per-synthetic-theta sufficient-statistic MVN likelihood: at each synthetic
+  theta_i with N_i MC replicates we observe (ȳ_i, S_i) and add the exact
+  joint log-likelihood of those N_i i.i.d. MVN draws, with mean mu(theta_i)
+  (deterministic prediction + bias GP) and covariance Sigma (theta-independent
+  in this version). This simultaneously informs the bias GP via ȳ_i and Sigma
+  (diagonal *and* correlations) via S_i.
 """
 
 import numpy as np
 
-_REQUIRED_KEYS = ("rel_bias", "eps_rel", "log_det_ld", "S_mc", "N_rep")
+_REQUIRED_KEYS = ("y_bar", "L_S", "N_rep", "det_pi", "det_ld", "log_det_ld")
 
 # ── Stan blocks ────────────────────────────────────────────────────────────────
 
 SURROGATE_DATA = """\
-    // ── GP surrogate: synthetic relative-bias observations ─────────────────
-    int<lower=0> n_synthetic_obs;
-    vector[n_synthetic_obs] u_synthetic_obs;       // bin midpoint
-    vector[n_synthetic_obs] log_ld_synthetic_obs;  // log(det_ld(theta_syn, bin))
-    vector[n_synthetic_obs] synthetic_obs;         // mc_ld/det_ld - 1
-    vector<lower=0>[n_synthetic_obs] bias_se;      // SE of synthetic_obs
-    // Wishart sufficient stats for joint (pi, LD) Sigma
-    int<lower=0> n_sum;
-    matrix[n_bins + 1, n_bins + 1] S_sum;
-    // HSGP hyperparameters
+    // ── Synthetic theta points (sufficient-statistic surrogate) ────────────
+    int<lower=0> n_synthetic;
+    array[n_synthetic] vector[n_bins + 1] y_bar_syn;                       // sample mean of joint (pi, LD) MC reps
+    array[n_synthetic] matrix[n_bins + 1, n_bins + 1] L_S_syn;             // chol(S_i) with S_i = sum_j (y_ij - ȳ_i)(y_ij - ȳ_i)'
+    array[n_synthetic] int<lower=1> N_rep_syn;
+    vector[n_synthetic] det_pi_syn;                                        // deterministic pi at theta_i
+    array[n_synthetic] vector[n_bins] det_ld_syn;                          // deterministic LD at theta_i
+    array[n_synthetic] vector[n_bins] log_det_ld_syn;
+    // HSGP hyperparameters (bias GP over (u, log det_ld))
     real<lower=0> hsgp_c;
     int<lower=1>  hsgp_m_u;
     int<lower=1>  hsgp_m_ld;
     real<lower=0> gp_alpha_std;
-    // Standardization of log(det_ld) axis (data-derived)
+    // Standardization of log(det_ld) axis (data-derived from observed windows)
     real log_ld_mu;
     real<lower=0> log_ld_sig;
-    // LKJ + log-Normal prior hyperparameters
+    // Sigma prior hyperparameters
     real<lower=0> lkj_eta;
     vector[n_bins + 1] log_sigma_y_loc;
     vector<lower=0>[n_bins + 1] log_sigma_y_scale;
@@ -57,12 +60,21 @@ JOINT_TRANSFORMED_DATA = """\
 
     matrix[n_bins, hsgp_m_u] PHI_u_pred = PHI(n_bins, hsgp_m_u, L_u, u_std);
 
-    vector[n_synthetic_obs] u_synthetic_std     = (u_synthetic_obs - u_mu) / u_sig;
-    vector[n_synthetic_obs] log_ld_synthetic_std = (log_ld_synthetic_obs - log_ld_mu) / log_ld_sig;
-    matrix[n_synthetic_obs, hsgp_m_u]  PHI_u_train  = PHI(n_synthetic_obs, hsgp_m_u,  L_u,  u_synthetic_std);
-    matrix[n_synthetic_obs, hsgp_m_ld] PHI_ld_train = PHI(n_synthetic_obs, hsgp_m_ld, L_ld, log_ld_synthetic_std);
-
-    matrix[D, D] L_S_sum = cholesky_decompose(n_sum > 0 ? S_sum : diag_matrix(rep_vector(1.0, D)));
+    // Flatten synthetic (u, log_det_ld) inputs for batched bias-GP evaluation.
+    int n_syn_flat = n_synthetic * n_bins;
+    vector[n_syn_flat] u_syn_flat;
+    vector[n_syn_flat] log_ld_syn_flat;
+    for (i in 1:n_synthetic) {
+        for (b in 1:n_bins) {
+            int k = (i - 1) * n_bins + b;
+            u_syn_flat[k]      = bin_midpoints[b];
+            log_ld_syn_flat[k] = log_det_ld_syn[i][b];
+        }
+    }
+    vector[n_syn_flat] u_syn_std      = (u_syn_flat - u_mu) / u_sig;
+    vector[n_syn_flat] log_ld_syn_std = (log_ld_syn_flat - log_ld_mu) / log_ld_sig;
+    matrix[n_syn_flat, hsgp_m_u]  PHI_u_train  = PHI(n_syn_flat, hsgp_m_u,  L_u,  u_syn_std);
+    matrix[n_syn_flat, hsgp_m_ld] PHI_ld_train = PHI(n_syn_flat, hsgp_m_ld, L_ld, log_ld_syn_std);
 """
 
 SURROGATE_PARAMETERS = """\
@@ -83,7 +95,7 @@ JOINT_TP_PREFIX = """\
 """
 
 JOINT_TP_SUFFIX = """\
-    // Evaluate GP at prediction inputs (u_b, log(approx_expected_ld[b])).
+    // Evaluate bias GP at prediction inputs (u_b, log(approx_expected_ld[b])).
     vector[n_bins] log_ld_pred_std = (log(approx_expected_ld) - log_ld_mu) / log_ld_sig;
     matrix[n_bins, hsgp_m_ld] PHI_ld_pred = PHI(n_bins, hsgp_m_ld, L_ld, log_ld_pred_std);
     matrix[n_bins, hsgp_m_ld] tmp_pred = PHI_u_pred * B;
@@ -108,21 +120,30 @@ SURROGATE_MODEL = """\
     L_Omega ~ lkj_corr_cholesky(lkj_eta);
     log_sigma_y ~ normal(log_sigma_y_loc, log_sigma_y_scale);
 
-    // GP surrogate: synthetic relative-bias observations
-    if (n_synthetic_obs > 0) {
-        matrix[n_synthetic_obs, hsgp_m_ld] tmp_train = PHI_u_train * B;
-        vector[n_synthetic_obs] gp_bias_train;
-        for (k in 1:n_synthetic_obs) {
-            gp_bias_train[k] = dot_product(tmp_train[k], PHI_ld_train[k]);
+    // Synthetic theta points: per-point sufficient-statistic MVN likelihood.
+    // log p({y_ij} | mu_i, Sigma) = -1/2 tr(Sigma^{-1} [S_i + N_i (ȳ_i - mu_i)(ȳ_i - mu_i)'])
+    //                              - 1/2 N_i log|Sigma|  + const
+    // where  tr(Sigma^{-1} S_i) = sum(square( L_Sigma^{-1} L_S_i ))
+    //   and  (ȳ_i - mu_i)' Sigma^{-1} (ȳ_i - mu_i) = dot_self( L_Sigma^{-1} (ȳ_i - mu_i) ).
+    if (n_synthetic > 0) {
+        matrix[n_syn_flat, hsgp_m_ld] tmp_train = PHI_u_train * B;
+        vector[n_syn_flat] gp_bias_flat;
+        for (k in 1:n_syn_flat) {
+            gp_bias_flat[k] = dot_product(tmp_train[k], PHI_ld_train[k]);
         }
-        synthetic_obs ~ normal(gp_bias_train, bias_se);
-    }
-
-    // Wishart sufficient-statistic likelihood for Sigma
-    if (n_sum > 0) {
-        matrix[D, D] A = mdivide_left_tri_low(L_Sigma, L_S_sum);
         real log_det_Sigma = 2 * sum(log(diagonal(L_Sigma)));
-        target += -0.5 * sum(square(A)) - 0.5 * n_sum * log_det_Sigma;
+        for (i in 1:n_synthetic) {
+            vector[D] mu_i;
+            mu_i[1] = det_pi_syn[i];
+            for (b in 1:n_bins) {
+                int k = (i - 1) * n_bins + b;
+                mu_i[b + 1] = det_ld_syn[i][b] * (1.0 + gp_bias_flat[k]);
+            }
+            vector[D] v = mdivide_left_tri_low(L_Sigma, y_bar_syn[i] - mu_i);
+            matrix[D, D] M = mdivide_left_tri_low(L_Sigma, L_S_syn[i]);
+            real quad = N_rep_syn[i] * dot_self(v) + sum(square(M));
+            target += -0.5 * quad - 0.5 * N_rep_syn[i] * log_det_Sigma;
+        }
     }
 """
 
@@ -136,35 +157,49 @@ JOINT_GENERATED_QUANTITIES = """\
 
 
 def make_synthetic_point(
-    det_ld: np.ndarray, mc_pi_reps: np.ndarray, mc_ld_reps: np.ndarray
+    det_pi: float,
+    det_ld: np.ndarray,
+    mc_pi_reps: np.ndarray,
+    mc_ld_reps: np.ndarray,
+    ridge: float = 1e-12,
 ) -> dict:
     """Build a synthetic-point dict from raw MC outputs at one theta.
 
     Parameters
     ----------
-    det_ld : (n_bins,) deterministic LD prediction at this theta
-    mc_pi_reps : (N,) per-window MC pi estimates
-    mc_ld_reps : (N, n_bins) per-window MC LD estimates
+    det_pi      : scalar deterministic pi prediction at this theta
+    det_ld      : (n_bins,) deterministic LD prediction at this theta
+    mc_pi_reps  : (N,)         per-replicate MC pi estimates
+    mc_ld_reps  : (N, n_bins)  per-replicate MC LD estimates
+    ridge       : jitter added to S for numerical Cholesky
 
     Returns
     -------
     dict with keys:
-      rel_bias    : (n_bins,) mean of mc_ld/det_ld - 1
-      eps_rel     : (n_bins,) SE of rel_bias across replicates
-      log_det_ld  : (n_bins,) log(det_ld) at this theta
-      S_mc        : (D, D)   sample covariance of joint (pi, LD)
+      y_bar       : (D,)     sample mean of joint (pi, LD) reps
+      L_S         : (D, D)   chol( sum_j (y_j - ȳ)(y_j - ȳ)' + ridge*I )
       N_rep       : int      number of MC replicates
+      det_pi      : float
+      det_ld      : (n_bins,)
+      log_det_ld  : (n_bins,)
     """
     N = len(mc_ld_reps)
-    rel = mc_ld_reps / det_ld - 1.0
-    joint = np.concatenate([mc_pi_reps[:, None], mc_ld_reps], axis=1)
-    S_mc = np.cov(joint, rowvar=False, ddof=1)
+    if N < 2:
+        raise ValueError(f"Need ≥ 2 MC replicates; got {N}.")
+    joint = np.concatenate([np.asarray(mc_pi_reps)[:, None], np.asarray(mc_ld_reps)], axis=1)
+    D = joint.shape[1]
+    y_bar = joint.mean(axis=0)
+    centered = joint - y_bar
+    S = centered.T @ centered
+    L_S = np.linalg.cholesky(S + ridge * np.eye(D))
+    det_ld_arr = np.asarray(det_ld, dtype=float)
     return {
-        "rel_bias": rel.mean(axis=0),
-        "eps_rel": rel.std(axis=0, ddof=1) / np.sqrt(N),
-        "log_det_ld": np.log(det_ld),
-        "S_mc": S_mc,
+        "y_bar": y_bar.astype(float),
+        "L_S": L_S.astype(float),
         "N_rep": int(N),
+        "det_pi": float(det_pi),
+        "det_ld": det_ld_arr,
+        "log_det_ld": np.log(det_ld_arr),
     }
 
 
@@ -197,31 +232,25 @@ def surrogate_payload(
 ) -> dict:
     n_bins = len(left_bins)
     D = n_bins + 1
-    u_mid = 0.5 * (np.asarray(left_bins) + np.asarray(right_bins))
+    K = len(synthetic_points)
 
-    if not synthetic_points:
+    if K == 0:
         return {
-            "n_synthetic_obs": 0,
-            "u_synthetic_obs": np.zeros(0),
-            "log_ld_synthetic_obs": np.zeros(0),
-            "synthetic_obs": np.zeros(0),
-            "bias_se": np.ones(0),
-            "n_sum": 0,
-            "S_sum": np.eye(D),
+            "n_synthetic": 0,
+            "y_bar_syn": np.zeros((0, D)),
+            "L_S_syn": np.zeros((0, D, D)),
+            "N_rep_syn": np.zeros(0, dtype=int),
+            "det_pi_syn": np.zeros(0),
+            "det_ld_syn": np.zeros((0, n_bins)),
+            "log_det_ld_syn": np.zeros((0, n_bins)),
         }
 
-    synthetic_obs = np.concatenate([p["rel_bias"] for p in synthetic_points])
-    bias_se = np.concatenate([p["eps_rel"] for p in synthetic_points])
-    log_ld_synthetic_obs = np.concatenate([p["log_det_ld"] for p in synthetic_points])
-    u_synthetic_obs = np.tile(u_mid, len(synthetic_points))
-    S_sum = sum((p["N_rep"] - 1) * p["S_mc"] for p in synthetic_points)
-    n_sum = int(sum(p["N_rep"] - 1 for p in synthetic_points))
     return {
-        "n_synthetic_obs": int(len(synthetic_obs)),
-        "u_synthetic_obs": u_synthetic_obs,
-        "log_ld_synthetic_obs": log_ld_synthetic_obs,
-        "synthetic_obs": synthetic_obs,
-        "bias_se": bias_se,
-        "n_sum": n_sum,
-        "S_sum": S_sum,
+        "n_synthetic": K,
+        "y_bar_syn": np.stack([p["y_bar"] for p in synthetic_points]),
+        "L_S_syn": np.stack([p["L_S"] for p in synthetic_points]),
+        "N_rep_syn": np.array([p["N_rep"] for p in synthetic_points], dtype=int),
+        "det_pi_syn": np.array([p["det_pi"] for p in synthetic_points], dtype=float),
+        "det_ld_syn": np.stack([p["det_ld"] for p in synthetic_points]),
+        "log_det_ld_syn": np.stack([p["log_det_ld"] for p in synthetic_points]),
     }

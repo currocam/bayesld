@@ -46,7 +46,7 @@ functions {{
 
 data {{
     int<lower=1> n_bins;
-    int<lower=2> num_windows;
+    int<lower=1> num_windows;
     vector[n_bins] left_bins;
     vector[n_bins] right_bins;
     real<lower=0> mutation_rate;
@@ -122,6 +122,7 @@ class ConstantDemography:
         gp_alpha_std: float = 0.005,
         lkj_eta: float = 2.0,
         log_sigma_y_scale: float = 1.0,
+        log_sigma_y_loc: Optional[np.ndarray] = None,
         prior: Optional[str] = None,
         parameters: str = _DEFAULT_PARAMETERS,
         transformed_parameters: str = _DEFAULT_TRANSFORMED_PARAMETERS,
@@ -144,6 +145,11 @@ class ConstantDemography:
         self._gp_alpha_std = float(gp_alpha_std)
         self._lkj_eta = float(lkj_eta)
         self._log_sigma_y_scale = float(log_sigma_y_scale)
+        self._log_sigma_y_loc = (
+            np.asarray(log_sigma_y_loc, dtype=float)
+            if log_sigma_y_loc is not None
+            else None
+        )
 
         self._synthetic_points: list[dict] = []
 
@@ -181,7 +187,11 @@ class ConstantDemography:
 
     def stan_data(self) -> dict:
         log_ld_mu, log_ld_sig = sg.compute_standardization(self._ld)
-        log_sigma_y_loc = sg.compute_log_sigma_y_loc(self._diversity, self._ld)
+        log_sigma_y_loc = (
+            self._log_sigma_y_loc
+            if self._log_sigma_y_loc is not None
+            else sg.compute_log_sigma_y_loc(self._diversity, self._ld)
+        )
         data = {
             "n_bins": int(len(self._left_bins)),
             "num_windows": int(len(self._diversity)),
@@ -294,7 +304,7 @@ class ConstantDemography:
         if model is None:
             model = msprime.SMCK(k=1)
 
-        _, det_ld_raw = det.expected_constant(
+        det_pi_raw, det_ld_raw = det.expected_constant(
             ne,
             self._left_bins,
             self._right_bins,
@@ -302,6 +312,7 @@ class ConstantDemography:
             sample_size=self._num_samples,
             ploidy=self._ploidy,
         )
+        det_pi = float(det_pi_raw)
         det_ld = np.asarray(det_ld_raw)
 
         mc_kwargs = dict(
@@ -331,7 +342,7 @@ class ConstantDemography:
             f"MC evaluation returned only {len(mc_ld_reps)} replicate(s); "
             "need at least 2 for a meaningful SE estimate."
         )
-        return sg.make_synthetic_point(det_ld, mc_pi_reps, mc_ld_reps)
+        return sg.make_synthetic_point(det_pi, det_ld, mc_pi_reps, mc_ld_reps)
 
     # ─── Active learning ──────────────────────────────────────────────────────
 

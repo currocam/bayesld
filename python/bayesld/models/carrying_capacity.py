@@ -322,7 +322,7 @@ class ExponentialCarryingCapacityDemography:
         if model is None:
             model = msprime.SMCK(k=1)
 
-        _, det_ld_raw = det.expected_exponential_carrying_capacity(
+        det_pi_raw, det_ld_raw = det.expected_exponential_carrying_capacity(
             ne_c,
             ne_a,
             t0,
@@ -334,6 +334,7 @@ class ExponentialCarryingCapacityDemography:
             sample_size=self._num_samples,
             ploidy=self._ploidy,
         )
+        det_pi = float(det_pi_raw)
         det_ld = np.asarray(det_ld_raw)
 
         mc_kwargs = dict(
@@ -367,7 +368,7 @@ class ExponentialCarryingCapacityDemography:
             f"MC evaluation returned only {len(mc_ld_reps)} replicate(s); "
             "need at least 2 for a meaningful SE estimate."
         )
-        return sg.make_synthetic_point(det_ld, mc_pi_reps, mc_ld_reps)
+        return sg.make_synthetic_point(det_pi, det_ld, mc_pi_reps, mc_ld_reps)
 
     # ─── Active learning ──────────────────────────────────────────────────────
 
