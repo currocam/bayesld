@@ -2,10 +2,11 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "bayesld @ git+https://github.com/currocam/bayesld.git@152060c",
+#     "bayesld @ git+https://github.com/currocam/bayesld.git@c56ee31",
 #     "numpy",
 # ]
 # ///
+# update 2
 """
 SBC stage B (constant Ne): MCMC sampling for one dataset, reusing the
 synthetic points learned in stage A.

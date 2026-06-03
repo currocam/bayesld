@@ -3,10 +3,11 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "arviz>=0.23.4",
-#     "bayesld @ git+https://github.com/currocam/bayesld.git@152060c",
+#     "bayesld @ git+https://github.com/currocam/bayesld.git@c56ee31",
 #     "numpy",
 # ]
 # ///
+# update 2
 """
 SBC stage A (piecewise constant, 2-epoch): active learning + final pathfinder
 for one dataset.
