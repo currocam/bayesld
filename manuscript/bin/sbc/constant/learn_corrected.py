@@ -7,7 +7,6 @@
 #     "numpy",
 # ]
 # ///
-# update 2
 """
 SBC stage A (constant Ne): active learning + final pathfinder for one dataset.
 

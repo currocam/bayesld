@@ -6,7 +6,6 @@
 #     "numpy",
 # ]
 # ///
-# update 2
 """
 SBC stage B (piecewise exponential, 2-epoch): MCMC sampling for one dataset,
 reusing the synthetic points learned in stage A.

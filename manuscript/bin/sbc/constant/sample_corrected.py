@@ -6,7 +6,6 @@
 #     "numpy",
 # ]
 # ///
-# update 2
 """
 SBC stage B (constant Ne): MCMC sampling for one dataset, reusing the
 synthetic points learned in stage A.

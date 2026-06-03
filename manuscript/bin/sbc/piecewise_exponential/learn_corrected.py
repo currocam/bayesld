@@ -8,7 +8,6 @@
 #     "numpy",
 # ]
 # ///
-# update 2
 """
 SBC stage A (piecewise exponential, 2-epoch): active learning + final
 pathfinder for one dataset.

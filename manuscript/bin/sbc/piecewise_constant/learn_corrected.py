@@ -7,7 +7,6 @@
 #     "numpy",
 # ]
 # ///
-# update 2
 """
 SBC stage A (piecewise constant, 2-epoch): active learning + final pathfinder
 for one dataset.
