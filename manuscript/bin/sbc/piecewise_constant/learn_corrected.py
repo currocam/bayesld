@@ -82,7 +82,7 @@ def main():
         n_points_per_iter=args.n_points_per_iter,
         n_iter=args.n_iter,
         strategy="pathfinder",
-        num_replicates=50,
+        max_tolerance=0.1,
         seed=SEED,
     )
 

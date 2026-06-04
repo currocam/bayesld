@@ -84,7 +84,7 @@ def main():
         n_iter=args.n_iter,
         strategy="pathfinder",
         model=msprime.SMCK(k=0),
-        num_replicates=50,
+        max_tolerance=0.1,
         seed=SEED,
     )
 
