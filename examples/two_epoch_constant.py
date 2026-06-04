@@ -36,28 +36,28 @@ def _(mo):
     ne1_slider = mo.ui.slider(
         100,
         50_000,
-        value=2_000,
+        value=100,
         step=100,
         label="Ne recent epoch (truth)",
     )
     ne2_slider = mo.ui.slider(
         100,
         50_000,
-        value=10_000,
+        value=2000,
         step=100,
         label="Ne ancestral epoch (truth)",
     )
     t_boundary_slider = mo.ui.slider(
         1,
         500,
-        value=50,
+        value=20,
         step=1,
         label="t boundary (generations ago)",
     )
     sample_size_slider = mo.ui.slider(
         10, 200, value=50, step=10, label="Sample size (diploid)"
     )
-    num_windows_slider = mo.ui.slider(10, 500, value=50, step=10, label="Windows")
+    num_windows_slider = mo.ui.slider(10, 500, value=20, step=10, label="Windows")
     mo.vstack(
         [
             mo.md("## Simulation parameters"),
@@ -196,8 +196,8 @@ def _(mo, model):
     mo.stop(model is None)
     with mo.status.spinner("Active learning (bias correction)..."):
         model.active_learn_bias(
-            n_points_per_iter=5 * 3,
-            n_iter=5 * 3,
+            n_points_per_iter=5,
+            n_iter=5,
             max_tolerance=0.1,
             strategy="pathfinder",
             seed=41,
@@ -216,7 +216,7 @@ def _(left_bins, mo, model, n_pts, np, plt, right_bins):
     _n_bins = len(_bin_mid)
 
     # Cumulative mean and SE of relative bias after each point
-    all_bias = np.array([p["rel_bias"] for p in points])  # (n_pts, n_bins)
+    all_bias = np.array([p["rel_bias"] for p in points])
     cum_mean = np.cumsum(all_bias, axis=0) / np.arange(1, len(all_bias) + 1)[:, None]
     cum_std = np.zeros_like(cum_mean)
     for k in range(2, len(all_bias) + 1):
@@ -275,7 +275,13 @@ def _(mo, model, n_pts):
 def _(idata_corrected):
     import arviz_stats as azs
 
-    azs.summary(idata_corrected)
+    azs.summary(idata_corrected, var_names=["Ne_c", "Ne_a", 't0'])
+    return (azs,)
+
+
+@app.cell
+def _(azs, idata_baseline):
+    azs.summary(idata_baseline, var_names=["Ne_c", "Ne_a", 't0'])
     return
 
 

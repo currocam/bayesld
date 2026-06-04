@@ -108,8 +108,7 @@ model {{
 {sg.SURROGATE_MODEL}
 {prior}
 
-    y_obs ~ multi_normal_cholesky(mu_y, L_Sigma);
-}}
+{sg.JOINT_OBS_MODEL}}}
 
 generated quantities {{
 {sg.JOINT_GENERATED_QUANTITIES}}}
@@ -135,12 +134,10 @@ class ExponentialCarryingCapacityDemography:
         ploidy: int = 2,
         num_workers: int = 1,
         hsgp_c: float = 1.5,
-        hsgp_m_u: int = 10,
         hsgp_m_ld: int = 6,
         n_quad: int = _DEFAULT_N_QUAD,
         gp_alpha_std: float = 0.005,
-        lkj_eta: float = 2.0,
-        log_sigma_y_scale: float = 1.0,
+        sigma_emp: Optional[np.ndarray] = None,
         prior: Optional[str] = None,
         parameters: str = _DEFAULT_PARAMETERS,
         transformed_parameters: str = _DEFAULT_TRANSFORMED_PARAMETERS,
@@ -158,11 +155,11 @@ class ExponentialCarryingCapacityDemography:
         self._right_bins = np.asarray(right_bins, dtype=float)
         self._num_workers = int(num_workers)
         self._hsgp_c = float(hsgp_c)
-        self._hsgp_m_u = int(hsgp_m_u)
         self._hsgp_m_ld = int(hsgp_m_ld)
         self._gp_alpha_std = float(gp_alpha_std)
-        self._lkj_eta = float(lkj_eta)
-        self._log_sigma_y_scale = float(log_sigma_y_scale)
+        self._sigma_emp = (
+            np.asarray(sigma_emp, dtype=float) if sigma_emp is not None else None
+        )
 
         self._gl_nodes, self._gl_weights = np.polynomial.legendre.leggauss(n_quad)
 
@@ -202,7 +199,11 @@ class ExponentialCarryingCapacityDemography:
 
     def stan_data(self) -> dict:
         log_ld_mu, log_ld_sig = sg.compute_standardization(self._ld)
-        log_sigma_y_loc = sg.compute_log_sigma_y_loc(self._diversity, self._ld)
+        sigma_emp = (
+            self._sigma_emp
+            if self._sigma_emp is not None
+            else sg.compute_sigma_emp(self._diversity, self._ld)
+        )
         data = {
             "n_bins": int(len(self._left_bins)),
             "num_windows": int(len(self._diversity)),
@@ -216,15 +217,11 @@ class ExponentialCarryingCapacityDemography:
             "gl_nodes": self._gl_nodes,
             "gl_weights": self._gl_weights,
             "hsgp_c": self._hsgp_c,
-            "hsgp_m_u": self._hsgp_m_u,
             "hsgp_m_ld": self._hsgp_m_ld,
             "gp_alpha_std": self._gp_alpha_std,
             "log_ld_mu": log_ld_mu,
             "log_ld_sig": log_ld_sig,
-            "lkj_eta": self._lkj_eta,
-            "log_sigma_y_loc": log_sigma_y_loc,
-            "log_sigma_y_scale": self._log_sigma_y_scale
-            * np.ones(len(self._left_bins) + 1),
+            "sigma_emp": sigma_emp,
         }
         data.update(
             sg.surrogate_payload(
@@ -263,7 +260,6 @@ class ExponentialCarryingCapacityDemography:
         parameters: Optional[str] = None,
         transformed_parameters: Optional[str] = None,
         gp_alpha_std: Optional[float] = None,
-        lkj_eta: Optional[float] = None,
     ) -> None:
         needs_recompile = False
         if prior is not None and prior != self._prior:
@@ -280,8 +276,6 @@ class ExponentialCarryingCapacityDemography:
             needs_recompile = True
         if gp_alpha_std is not None:
             self._gp_alpha_std = float(gp_alpha_std)
-        if lkj_eta is not None:
-            self._lkj_eta = float(lkj_eta)
 
         if needs_recompile:
             self._stan_code = _generate_stan(
@@ -322,7 +316,7 @@ class ExponentialCarryingCapacityDemography:
         if model is None:
             model = msprime.SMCK(k=1)
 
-        det_pi_raw, det_ld_raw = det.expected_exponential_carrying_capacity(
+        _, det_ld_raw = det.expected_exponential_carrying_capacity(
             ne_c,
             ne_a,
             t0,
@@ -334,7 +328,6 @@ class ExponentialCarryingCapacityDemography:
             sample_size=self._num_samples,
             ploidy=self._ploidy,
         )
-        det_pi = float(det_pi_raw)
         det_ld = np.asarray(det_ld_raw)
 
         mc_kwargs = dict(
@@ -348,7 +341,7 @@ class ExponentialCarryingCapacityDemography:
         else:
             mc_kwargs["rtol"] = rtol
 
-        mc_pi_reps, mc_ld_reps = montecarlo.expected_exponential_carrying_capacity(
+        _, mc_ld_reps = montecarlo.expected_exponential_carrying_capacity(
             ne_c,
             ne_a,
             t0,
@@ -362,13 +355,12 @@ class ExponentialCarryingCapacityDemography:
             self._num_samples,
             **mc_kwargs,
         )
-        mc_pi_reps = np.asarray(mc_pi_reps)
         mc_ld_reps = np.asarray(mc_ld_reps)
         assert len(mc_ld_reps) > 1, (
             f"MC evaluation returned only {len(mc_ld_reps)} replicate(s); "
             "need at least 2 for a meaningful SE estimate."
         )
-        return sg.make_synthetic_point(det_pi, det_ld, mc_pi_reps, mc_ld_reps)
+        return sg.make_synthetic_point(det_ld, mc_ld_reps)
 
     # ─── Active learning ──────────────────────────────────────────────────────
 

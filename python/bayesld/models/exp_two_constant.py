@@ -1,14 +1,17 @@
 """
-Piecewise-constant-Ne demographic inference models.
+Three-epoch demographic inference model: exponential phase followed by two
+constant-Ne epochs.
 
-Two classes share a single Stan template:
+``ExpTwoConstantDemography`` models::
 
-``TwoEpochDemography``
-    Two-epoch specialization with default priors.
+    Ne(t) = Ne_c * exp(-alpha * t)   for t in [0, t0)
+    Ne(t) = Ne_a                     for t in [t0, t1)
+    Ne(t) = Ne_b                     for t >= t1
 
-``PiecewiseConstantDemography``
-    Generic N-epoch model with **no defaults** — the user must supply
-    ``n_epochs``, ``parameters``, ``transformed_parameters``, and ``prior``.
+with ``alpha = (log Ne_c - log Ne_a) / t0`` (continuity at t0).
+
+The default parameterisation is ``(log_Ne_c, log_Ne_a, log_Ne_b, log_t0, log_dt)``
+with ``t1 = t0 + exp(log_dt)`` to enforce ``t1 > t0``.
 """
 
 import pathlib
@@ -31,21 +34,26 @@ def _default_prior(diversity: np.ndarray, mutation_rate: float) -> str:
     return (
         f"    log_Ne_c ~ normal({log_ne_mu:.4f}, 1.5);\n"
         f"    log_Ne_a ~ normal({log_ne_mu:.4f}, 1.5);\n"
-        f"    log_t0   ~ normal({np.log(50.0):.4f}, 1.5);"
+        f"    log_Ne_b ~ normal({log_ne_mu:.4f}, 1.5);\n"
+        f"    log_t0   ~ normal({np.log(50.0):.4f}, 1.5);\n"
+        f"    log_dt   ~ normal({np.log(200.0):.4f}, 1.5);"
     )
 
 
 _DEFAULT_PARAMETERS = """\
     real<offset=log_ne_offset> log_Ne_c;
     real<offset=log_ne_offset> log_Ne_a;
-    real log_t0;"""
+    real<offset=log_ne_offset> log_Ne_b;
+    real log_t0;
+    real log_dt;"""
 
 _DEFAULT_TRANSFORMED_PARAMETERS = """\
     real<lower=0> Ne_c = exp(log_Ne_c);
     real<lower=0> Ne_a = exp(log_Ne_a);
+    real<lower=0> Ne_b = exp(log_Ne_b);
     real<lower=0> t0   = exp(log_t0);
-    vector[2] Ne_values = [Ne_c, Ne_a]';
-    vector[1] t_boundaries = [t0]';"""
+    real<lower=0> t1   = t0 + exp(log_dt);
+    real alpha = (log_Ne_c - log_Ne_a) / t0;"""
 
 
 def _generate_stan(
@@ -53,14 +61,10 @@ def _generate_stan(
     parameters: str = _DEFAULT_PARAMETERS,
     transformed_parameters: str = _DEFAULT_TRANSFORMED_PARAMETERS,
 ) -> str:
-    """Assemble the complete Stan program for a piecewise-constant model.
-
-    The injected ``transformed_parameters`` must define
-    ``vector[n_epochs] Ne_values`` and ``vector[n_epochs - 1] t_boundaries``.
-    """
+    """Assemble the complete Stan program for the exp + two-constant model."""
     gp_fn = (_STAN_DIR / "functions" / "gpbasisfun_functions.stan").read_text()
     shared_fn = (_STAN_DIR / "functions" / "shared.stan").read_text()
-    model_fn = (_STAN_DIR / "functions" / "piecewise_constant.stan").read_text()
+    model_fn = (_STAN_DIR / "functions" / "exp_two_constant.stan").read_text()
 
     return f"""\
 functions {{
@@ -68,20 +72,19 @@ functions {{
 {gp_fn}
 // ---- shared.stan ----
 {shared_fn}
-// ---- piecewise_constant.stan ----
+// ---- exp_two_constant.stan ----
 {model_fn}
 }}
 
 data {{
     int<lower=1> n_bins;
-    int<lower=1> num_windows;
+    int<lower=2> num_windows;
     vector[n_bins] left_bins;
     vector[n_bins] right_bins;
     real<lower=0> mutation_rate;
     int<lower=1> sample_size;
     vector[num_windows] pi_array;
     matrix[num_windows, n_bins] ld_mat;
-    int<lower=2> n_epochs;
     int<lower=1> n_quad;
     vector[n_quad] gl_nodes;
     vector[n_quad] gl_weights;
@@ -98,10 +101,11 @@ parameters {{
 transformed parameters {{
 {transformed_parameters}
 {sg.JOINT_TP_PREFIX}
-    real expected_pi = mu_div_piecewise_constant(n_epochs, Ne_values, t_boundaries, mutation_rate);
+    real expected_pi = mu_div_exp_two_constant(Ne_c, Ne_a, Ne_b, t0, t1, alpha,
+                                                mutation_rate, n_quad, gl_nodes, gl_weights);
     vector[n_bins] approx_expected_ld = correct_ld_finite_sample(
-        mu_ld_piecewise_constant(n_epochs, Ne_values, t_boundaries,
-                                  left_bins, right_bins, n_quad, gl_nodes, gl_weights),
+        mu_ld_exp_two_constant(Ne_c, Ne_a, Ne_b, t0, t1, alpha,
+                                left_bins, right_bins, n_quad, gl_nodes, gl_weights),
         sample_size
     );
 {sg.JOINT_TP_SUFFIX}}}
@@ -117,10 +121,32 @@ generated quantities {{
 """
 
 
-class _PiecewiseConstantBase:
-    """Shared implementation for TwoEpochDemography and PiecewiseConstantDemography."""
+class ExpTwoConstantDemography:
+    """Bayesian inference of (Ne_c, Ne_a, Ne_b, t0, t1) under an exp + two-constant model.
 
-    def _init_common(
+    Ne(t) = Ne_c * exp(-alpha t) for t < t0;  Ne_a for t in [t0, t1);  Ne_b for t >= t1.
+    alpha = (log Ne_c - log Ne_a) / t0.
+
+    Parameters
+    ----------
+    diversity : (num_windows,) per-window pi
+    ld : (num_windows, n_bins) per-window LD
+    mutation_rate, recombination_rate : float
+    num_samples : int (diploid sample size)
+    left_bins, right_bins : (n_bins,) recombination-distance bin edges (Morgans)
+    sequence_length : float | None
+    ploidy : int
+    num_workers : int
+    hsgp_c, hsgp_m_ld : HSGP boundary factor and basis sizes
+    n_quad : Gauss-Legendre quadrature points
+    gp_alpha_std : prior std on the GP amplitude
+    sigma_emp : per-component fixed sds [pi, ld_1, ..., ld_B]; if None,
+        computed empirically from (diversity, ld)
+    prior : Stan prior block (defaults to data-driven)
+    parameters, transformed_parameters : Stan injection points
+    """
+
+    def __init__(
         self,
         diversity: np.ndarray,
         ld: np.ndarray,
@@ -129,18 +155,17 @@ class _PiecewiseConstantBase:
         num_samples: int,
         left_bins: np.ndarray,
         right_bins: np.ndarray,
-        n_epochs: int,
-        sequence_length: Optional[float],
-        ploidy: int,
-        num_workers: int,
-        hsgp_c: float,
-        hsgp_m_ld: int,
-        n_quad: int,
-        gp_alpha_std: float,
-        sigma_emp: Optional[np.ndarray],
-        prior: str,
-        parameters: str,
-        transformed_parameters: str,
+        sequence_length: Optional[float] = None,
+        ploidy: int = 2,
+        num_workers: int = 1,
+        hsgp_c: float = 1.5,
+        hsgp_m_ld: int = 6,
+        n_quad: int = _DEFAULT_N_QUAD,
+        gp_alpha_std: float = 0.005,
+        sigma_emp: Optional[np.ndarray] = None,
+        prior: Optional[str] = None,
+        parameters: str = _DEFAULT_PARAMETERS,
+        transformed_parameters: str = _DEFAULT_TRANSFORMED_PARAMETERS,
     ):
         self._diversity = np.asarray(diversity, dtype=float)
         self._ld = np.asarray(ld, dtype=float)
@@ -153,7 +178,6 @@ class _PiecewiseConstantBase:
         self._num_samples = int(num_samples)
         self._left_bins = np.asarray(left_bins, dtype=float)
         self._right_bins = np.asarray(right_bins, dtype=float)
-        self._n_epochs = int(n_epochs)
         self._num_workers = int(num_workers)
         self._hsgp_c = float(hsgp_c)
         self._hsgp_m_ld = int(hsgp_m_ld)
@@ -166,7 +190,11 @@ class _PiecewiseConstantBase:
 
         self._synthetic_points: list[dict] = []
 
-        self._prior = prior
+        self._prior = (
+            prior
+            if prior is not None
+            else _default_prior(self._diversity, self._mutation_rate)
+        )
         self._parameters = parameters
         self._transformed_parameters = transformed_parameters
 
@@ -181,7 +209,7 @@ class _PiecewiseConstantBase:
     def _compile(self, code: str):
         import cmdstanpy
 
-        stan_file = self._tmpdir / "piecewise_constant_ne.stan"
+        stan_file = self._tmpdir / "exp_two_constant.stan"
         stan_file.write_text(code)
         return cmdstanpy.CmdStanModel(stan_file=str(stan_file), **_THREADS_OPTS)
 
@@ -210,7 +238,6 @@ class _PiecewiseConstantBase:
             "sample_size": self._num_samples,
             "pi_array": self._diversity,
             "ld_mat": self._ld,
-            "n_epochs": self._n_epochs,
             "n_quad": len(self._gl_nodes),
             "gl_nodes": self._gl_nodes,
             "gl_weights": self._gl_weights,
@@ -296,8 +323,12 @@ class _PiecewiseConstantBase:
 
     def _mc_eval(
         self,
-        ne_values: np.ndarray,
-        t_boundaries: np.ndarray,
+        ne_c: float,
+        ne_a: float,
+        ne_b: float,
+        t0: float,
+        t1: float,
+        alpha: float,
         mc_seed: int,
         rtol: float = 0.01,
         num_replicates: Optional[int] = None,
@@ -311,9 +342,13 @@ class _PiecewiseConstantBase:
         if model is None:
             model = msprime.SMCK(k=1)
 
-        _, det_ld_raw = det.expected_piecewise_constant(
-            ne_values,
-            t_boundaries,
+        _, det_ld_raw = det.expected_exp_two_constant(
+            ne_c,
+            ne_a,
+            ne_b,
+            t0,
+            t1,
+            alpha,
             self._left_bins,
             self._right_bins,
             self._mutation_rate,
@@ -333,9 +368,13 @@ class _PiecewiseConstantBase:
         else:
             mc_kwargs["rtol"] = rtol
 
-        _, mc_ld_reps = montecarlo.expected_piecewise_constant(
-            ne_values,
-            t_boundaries,
+        _, mc_ld_reps = montecarlo.expected_exp_two_constant(
+            ne_c,
+            ne_a,
+            ne_b,
+            t0,
+            t1,
+            alpha,
             self._left_bins,
             self._right_bins,
             self._mutation_rate,
@@ -376,32 +415,37 @@ class _PiecewiseConstantBase:
 
         for iteration in range(n_iter):
             draws = self._get_draws(n_points_per_iter, strategy, rng)
-            ne_mean = draws["Ne_values"].mean(axis=0)
-            t_mean = draws["t_boundaries"].mean(axis=0)
-            ne_str = "  ".join(f"Ne{i + 1}={v:,.0f}" for i, v in enumerate(ne_mean))
-            t_str = "  ".join(f"t{i + 1}={v:.1f}" for i, v in enumerate(t_mean))
             print(
                 f"[{strategy.upper()} iter={iteration + 1}/{n_iter} "
                 f"n_synthetic={len(self._synthetic_points)}]  "
-                f"{ne_str}  |  {t_str}"
+                f"Ne_c={draws['Ne_c'].mean():,.0f}  Ne_a={draws['Ne_a'].mean():,.0f}  "
+                f"Ne_b={draws['Ne_b'].mean():,.0f}  "
+                f"t0={draws['t0'].mean():.1f}  t1={draws['t1'].mean():.1f}"
             )
 
             iterator = tqdm(
-                range(len(draws["Ne_values"])),
+                range(len(draws["Ne_c"])),
                 desc=f"Active learning (iter {iteration + 1})",
                 disable=not progress_bar,
             )
             for i in iterator:
                 mc_seed = int(rng.integers(2**31))
-                ne_i = np.asarray(draws["Ne_values"][i])
-                t_i = np.asarray(draws["t_boundaries"][i])
-                ne_str = " ".join(f"Ne{k + 1}={v:,.0f}" for k, v in enumerate(ne_i))
-                t_str = " ".join(f"t{k + 1}={v:.1f}" for k, v in enumerate(t_i))
-                iterator.set_postfix_str(f"{ne_str} | {t_str}")
+                iterator.set_postfix_str(
+                    f"Ne_c={float(draws['Ne_c'][i]):,.0f} "
+                    f"Ne_a={float(draws['Ne_a'][i]):,.0f} "
+                    f"Ne_b={float(draws['Ne_b'][i]):,.0f} "
+                    f"t0={float(draws['t0'][i]):.1f} "
+                    f"t1={float(draws['t1'][i]):.1f} "
+                    f"alpha={float(draws['alpha'][i]):.3g}"
+                )
                 self._synthetic_points.append(
                     self._mc_eval(
-                        draws["Ne_values"][i],
-                        draws["t_boundaries"][i],
+                        float(draws["Ne_c"][i]),
+                        float(draws["Ne_a"][i]),
+                        float(draws["Ne_b"][i]),
+                        float(draws["t0"][i]),
+                        float(draws["t1"][i]),
+                        float(draws["alpha"][i]),
                         mc_seed,
                         rtol=max_tolerance,
                         num_replicates=num_replicates,
@@ -425,11 +469,14 @@ class _PiecewiseConstantBase:
             show_console=False,
             inits=0.5,
         )
-        ne_raw = pf.stan_variable("Ne_values")
-        t_raw = pf.stan_variable("t_boundaries")
-        ne_vals = np.atleast_2d(np.asarray(ne_raw))[:n_draws]
-        t_vals = np.atleast_2d(np.asarray(t_raw))[:n_draws]
-        return {"Ne_values": ne_vals, "t_boundaries": t_vals}
+        return {
+            "Ne_c": np.atleast_1d(np.asarray(pf.stan_variable("Ne_c")))[:n_draws],
+            "Ne_a": np.atleast_1d(np.asarray(pf.stan_variable("Ne_a")))[:n_draws],
+            "Ne_b": np.atleast_1d(np.asarray(pf.stan_variable("Ne_b")))[:n_draws],
+            "t0": np.atleast_1d(np.asarray(pf.stan_variable("t0")))[:n_draws],
+            "t1": np.atleast_1d(np.asarray(pf.stan_variable("t1")))[:n_draws],
+            "alpha": np.atleast_1d(np.asarray(pf.stan_variable("alpha")))[:n_draws],
+        }
 
     # ─── Inference ────────────────────────────────────────────────────────────
 
@@ -461,108 +508,3 @@ class _PiecewiseConstantBase:
         for group in trees[0].children:
             children[group] = xr.concat([t[group].ds for t in trees], dim="chain")
         return xr.DataTree.from_dict(children)
-
-
-# ── Public classes ────────────────────────────────────────────────────────────
-
-
-class TwoEpochDemography(_PiecewiseConstantBase):
-    """Two-epoch piecewise-constant model: Ne(t) = Ne_c for t < t0, Ne_a otherwise."""
-
-    def __init__(
-        self,
-        diversity: np.ndarray,
-        ld: np.ndarray,
-        mutation_rate: float,
-        recombination_rate: float,
-        num_samples: int,
-        left_bins: np.ndarray,
-        right_bins: np.ndarray,
-        sequence_length: Optional[float] = None,
-        ploidy: int = 2,
-        num_workers: int = 1,
-        hsgp_c: float = 1.5,
-        hsgp_m_ld: int = 6,
-        n_quad: int = _DEFAULT_N_QUAD,
-        gp_alpha_std: float = 0.005,
-        sigma_emp: Optional[np.ndarray] = None,
-        prior: Optional[str] = None,
-        parameters: str = _DEFAULT_PARAMETERS,
-        transformed_parameters: str = _DEFAULT_TRANSFORMED_PARAMETERS,
-    ):
-        diversity = np.asarray(diversity, dtype=float)
-        if prior is None:
-            prior = _default_prior(diversity, float(mutation_rate))
-        self._init_common(
-            diversity=diversity,
-            ld=ld,
-            mutation_rate=mutation_rate,
-            recombination_rate=recombination_rate,
-            num_samples=num_samples,
-            left_bins=left_bins,
-            right_bins=right_bins,
-            n_epochs=2,
-            sequence_length=sequence_length,
-            ploidy=ploidy,
-            num_workers=num_workers,
-            hsgp_c=hsgp_c,
-            hsgp_m_ld=hsgp_m_ld,
-            n_quad=n_quad,
-            gp_alpha_std=gp_alpha_std,
-            sigma_emp=sigma_emp,
-            prior=prior,
-            parameters=parameters,
-            transformed_parameters=transformed_parameters,
-        )
-
-
-class PiecewiseConstantDemography(_PiecewiseConstantBase):
-    """Generic N-epoch piecewise-constant model.
-
-    The injected ``transformed_parameters`` must define
-    ``vector[n_epochs] Ne_values`` and ``vector[n_epochs - 1] t_boundaries``.
-    """
-
-    def __init__(
-        self,
-        diversity: np.ndarray,
-        ld: np.ndarray,
-        mutation_rate: float,
-        recombination_rate: float,
-        num_samples: int,
-        left_bins: np.ndarray,
-        right_bins: np.ndarray,
-        n_epochs: int,
-        parameters: str,
-        transformed_parameters: str,
-        prior: str,
-        sequence_length: Optional[float] = None,
-        ploidy: int = 2,
-        num_workers: int = 1,
-        hsgp_c: float = 1.5,
-        hsgp_m_ld: int = 6,
-        n_quad: int = _DEFAULT_N_QUAD,
-        gp_alpha_std: float = 0.005,
-        sigma_emp: Optional[np.ndarray] = None,
-    ):
-        self._init_common(
-            diversity=diversity,
-            ld=ld,
-            mutation_rate=mutation_rate,
-            recombination_rate=recombination_rate,
-            num_samples=num_samples,
-            left_bins=left_bins,
-            right_bins=right_bins,
-            n_epochs=n_epochs,
-            sequence_length=sequence_length,
-            ploidy=ploidy,
-            num_workers=num_workers,
-            hsgp_c=hsgp_c,
-            hsgp_m_ld=hsgp_m_ld,
-            n_quad=n_quad,
-            gp_alpha_std=gp_alpha_std,
-            sigma_emp=sigma_emp,
-            prior=prior,
-            parameters=parameters,
-            transformed_parameters=transformed_parameters,
-        )

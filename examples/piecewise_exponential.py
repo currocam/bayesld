@@ -34,16 +34,16 @@ def _(linear_bins):
 @app.cell
 def _(mo):
     ne_c_slider = mo.ui.slider(
-        10, 50_000, value=4000, step=10, label="Ne_c (contemporary, truth)"
+        10, 50_000, value=1000, step=10, label="Ne_c (contemporary, truth)"
     )
     ne_a_slider = mo.ui.slider(
-        10, 50_000, value=10000, step=10, label="Ne_a (ancestral, truth)"
+        10, 50_000, value=5000, step=10, label="Ne_a (ancestral, truth)"
     )
     t0_slider = mo.ui.slider(
         1, 500, value=30, step=1, label="t0 (transition time, gen ago)"
     )
     sample_size_slider = mo.ui.slider(
-        10, 200, value=50, step=10, label="Sample size (diploid)"
+        10, 200, value=20, step=10, label="Sample size (diploid)"
     )
     num_windows_slider = mo.ui.slider(10, 500, value=50, step=10, label="Windows")
     mo.vstack(
@@ -159,7 +159,7 @@ def _(
         left_bins=left_bins,
         right_bins=right_bins,
         sequence_length=window_length,
-        num_workers=8,
+        num_workers=6,
         prior=(
             f"    log_Ne_c ~ normal({np.log(5000.0):.4f}, 1.5);\n"
             f"    log_Ne_a ~ normal({np.log(5000.0):.4f}, 1.5);\n"
@@ -188,7 +188,7 @@ def _(mo, model):
     mo.stop(model is None)
     with mo.status.spinner("Active learning (bias correction)..."):
         model.active_learn_bias(
-            n_points_per_iter=5,
+            n_points_per_iter=5*3*3,
             n_iter=5,
             max_tolerance=0.1,
             strategy="pathfinder",
@@ -208,7 +208,7 @@ def _(left_bins, mo, model, n_pts, np, plt, right_bins):
     _n_bins = len(_bin_mid)
 
     # Cumulative mean and SE of relative bias after each point
-    all_bias = np.array([p["rel_bias"] for p in points])  # (n_pts, n_bins)
+    all_bias = np.array([p["rel_bias"] for p in points])
     cum_mean = np.cumsum(all_bias, axis=0) / np.arange(1, len(all_bias) + 1)[:, None]
     cum_std = np.zeros_like(cum_mean)
     for k in range(2, len(all_bias) + 1):
@@ -267,7 +267,7 @@ def _(mo, model, n_pts):
 def _(idata_corrected):
     import arviz_stats as azs
 
-    azs.summary(idata_corrected)
+    azs.summary(idata_corrected, var_names=["Ne_c", "Ne_a", "t0"])
     return
 
 

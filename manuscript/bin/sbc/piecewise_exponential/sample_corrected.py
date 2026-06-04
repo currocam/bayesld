@@ -2,6 +2,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
+#     "arviz>=1.1",
 #     "bayesld @ git+https://github.com/currocam/bayesld.git@c56ee31",
 #     "numpy",
 # ]

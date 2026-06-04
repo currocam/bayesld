@@ -37,7 +37,7 @@ def _(mo):
     sample_size_slider = mo.ui.slider(
         10, 200, value=50, step=10, label="Sample size (diploid)"
     )
-    num_windows_slider = mo.ui.slider(10, 500, value=50, step=10, label="Windows")
+    num_windows_slider = mo.ui.slider(10, 500, value=20, step=10, label="Windows")
     mo.vstack(
         [
             mo.md("## Simulation parameters"),
@@ -80,7 +80,7 @@ def _(
             recombination_rate,
             window_length,
             sample_size,
-            random_seed=42,
+            random_seed=44,
             num_replicates=num_windows,
             ploidy=2,
             num_workers=8,
@@ -169,7 +169,7 @@ def _(left_bins, mo, model, n_pts, np, plt, right_bins):
     _n_bins = len(_bin_mid)
 
     # Cumulative mean and SE of relative bias after each point
-    all_bias = np.array([p["rel_bias"] for p in points])  # (n_pts, n_bins)
+    all_bias = np.array([p["rel_bias"] for p in points])
     cum_mean = np.cumsum(all_bias, axis=0) / np.arange(1, len(all_bias) + 1)[:, None]
     cum_std = np.zeros_like(cum_mean)
     for k in range(2, len(all_bias) + 1):
