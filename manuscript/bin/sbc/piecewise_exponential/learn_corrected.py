@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "arviz>=1.1",
-#     "bayesld @ git+https://github.com/currocam/bayesld.git@c56ee31",
+#     "bayesld @ git+https://github.com/currocam/bayesld.git@8f2e8b9",
 #     "msprime",
 #     "numpy",
 # ]
