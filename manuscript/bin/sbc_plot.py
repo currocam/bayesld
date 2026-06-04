@@ -48,12 +48,6 @@ def _():
     return data, scenario_name
 
 
-@app.cell
-def _():
-    method = "envelope"
-    return (method,)
-
-
 @app.function
 def sbc_base(data, group):
     ne1_draws = data["ne1_draws"]
@@ -111,7 +105,7 @@ def sbc_constant(data, group):
 
 
 @app.cell
-def _(data, method, scenario_name):
+def _(data, scenario_name):
     is_constant = "ne_draws" in data
     sbc_fn = sbc_constant if is_constant else sbc_base
 
@@ -126,7 +120,6 @@ def _(data, method, scenario_name):
         _pc = plot_ecdf_pit(
             sbc_fn(data, group),
             group="prior_sbc",
-            method=method,
             visuals={"title": {"text": label}},
         )
         _pc.savefig(f"sbc_{scenario_name}_{label}.pdf")
