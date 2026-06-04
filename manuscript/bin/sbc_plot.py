@@ -2,8 +2,8 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "arviz==1.1.0",
-#     "arviz-plots==1.1.0",
+#     "arviz>=0.23.4",
+#     "arviz-plots==0.7.0",
 #     "marimo",
 #     "matplotlib==3.10.9",
 #     "numpy==2.4.4",
