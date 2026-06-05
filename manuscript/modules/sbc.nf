@@ -34,7 +34,7 @@ process SBC_CONSTANT_LEARN_CORRECTED {
     script:
     tag = String.format("%03d_%03d", batch_idx, ds_idx)
     """
-    # update 3
+    # update 4
     ${projectDir}/bin/sbc/constant/learn_corrected.py \
         ${batch_pkl} \
         ${ds_idx} \
@@ -55,7 +55,7 @@ process SBC_CONSTANT_SAMPLE_CORRECTED {
 
     script:
     """
-    # update 3
+    # update 4
     ${projectDir}/bin/sbc/constant/sample_corrected.py \
         ${learn_pkl} \
         corrected_${learn_pkl.baseName - ~/^learn_/}.pkl
@@ -187,7 +187,7 @@ process SBC_PIECEWISE_CONSTANT_LEARN_CORRECTED {
     script:
     tag = String.format("%03d_%03d", batch_idx, ds_idx)
     """
-    # update 4
+    # update 5
     ${projectDir}/bin/sbc/piecewise_constant/learn_corrected.py \
         ${batch_pkl} \
         ${ds_idx} \
@@ -208,7 +208,7 @@ process SBC_PIECEWISE_CONSTANT_SAMPLE_CORRECTED {
 
     script:
     """
-    # update 3
+    # update 4
     ${projectDir}/bin/sbc/piecewise_constant/sample_corrected.py \
         ${learn_pkl} \
         corrected_${learn_pkl.baseName - ~/^learn_/}.pkl
@@ -323,7 +323,7 @@ process SBC_PIECEWISE_EXPONENTIAL_LEARN_CORRECTED {
     script:
     tag = String.format("%03d_%03d", batch_idx, ds_idx)
     """
-    # update 3
+    # update 4
     ${projectDir}/bin/sbc/piecewise_exponential/learn_corrected.py \
         ${batch_pkl} \
         ${ds_idx} \
@@ -344,7 +344,7 @@ process SBC_PIECEWISE_EXPONENTIAL_SAMPLE_CORRECTED {
 
     script:
     """
-    # update 3
+    # update 4
     ${projectDir}/bin/sbc/piecewise_exponential/sample_corrected.py \
         ${learn_pkl} \
         corrected_${learn_pkl.baseName - ~/^learn_/}.pkl

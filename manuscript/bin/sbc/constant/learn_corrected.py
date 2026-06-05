@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "arviz>=1.1",
-#     "bayesld @ git+https://github.com/currocam/bayesld.git@8f2e8b9",
+#     "bayesld @ git+https://github.com/currocam/bayesld.git@cf118d3",
 #     "numpy",
 # ]
 # ///
@@ -68,6 +68,7 @@ def main():
         n_iter=args.n_iter,
         strategy="pathfinder",
         max_tolerance=0.1,
+        min_replicates=30,
         seed=SEED,
     )
 
