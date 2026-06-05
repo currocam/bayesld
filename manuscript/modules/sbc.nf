@@ -73,6 +73,7 @@ process SBC_CONSTANT_INFER_NO_BIAS {
 
     script:
     """
+    #update
     ${projectDir}/bin/sbc/constant/infer_assume_no_bias.py \
         ${projectDir}/bin/sbc/constant/nobias_model.stan \
         ${batch_pkl} \
@@ -224,6 +225,7 @@ process SBC_PIECEWISE_CONSTANT_INFER_NO_BIAS {
 
     script:
     """
+    #INFER_NO_BIAS
     ${projectDir}/bin/sbc/piecewise_constant/infer_assume_no_bias.py \
         ${projectDir}/bin/sbc/piecewise_constant/nobias_model.stan \
         ${batch_pkl} \
@@ -358,6 +360,7 @@ process SBC_PIECEWISE_EXPONENTIAL_INFER_NO_BIAS {
 
     script:
     """
+    #update
     ${projectDir}/bin/sbc/piecewise_exponential/infer_assume_no_bias.py \
         ${projectDir}/bin/sbc/piecewise_exponential/nobias_model.stan \
         ${batch_pkl} \
