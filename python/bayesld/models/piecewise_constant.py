@@ -137,7 +137,8 @@ class _PiecewiseConstantBase:
         hsgp_m_ld: int,
         n_quad: int,
         gp_alpha_std: float,
-        sigma_emp: Optional[np.ndarray],
+        lkj_eta: float,
+        log_sigma_y_scale: float,
         prior: str,
         parameters: str,
         transformed_parameters: str,
@@ -158,13 +159,13 @@ class _PiecewiseConstantBase:
         self._hsgp_c = float(hsgp_c)
         self._hsgp_m_ld = int(hsgp_m_ld)
         self._gp_alpha_std = float(gp_alpha_std)
-        self._sigma_emp = (
-            np.asarray(sigma_emp, dtype=float) if sigma_emp is not None else None
-        )
+        self._lkj_eta = float(lkj_eta)
+        self._log_sigma_y_scale = float(log_sigma_y_scale)
 
         self._gl_nodes, self._gl_weights = np.polynomial.legendre.leggauss(n_quad)
 
         self._synthetic_points: list[dict] = []
+        self._sigma_points: list[dict] = []
 
         self._prior = prior
         self._parameters = parameters
@@ -196,10 +197,8 @@ class _PiecewiseConstantBase:
 
     def stan_data(self) -> dict:
         log_ld_mu, log_ld_sig = sg.compute_standardization(self._ld)
-        sigma_emp = (
-            self._sigma_emp
-            if self._sigma_emp is not None
-            else sg.compute_sigma_emp(self._diversity, self._ld)
+        log_sigma_y_loc, log_sigma_y_scale = sg.sigma_prior_hyperparams(
+            self._diversity, self._ld, self._log_sigma_y_scale
         )
         data = {
             "n_bins": int(len(self._left_bins)),
@@ -219,11 +218,16 @@ class _PiecewiseConstantBase:
             "gp_alpha_std": self._gp_alpha_std,
             "log_ld_mu": log_ld_mu,
             "log_ld_sig": log_ld_sig,
-            "sigma_emp": sigma_emp,
+            "log_sigma_y_loc": log_sigma_y_loc,
+            "log_sigma_y_scale": log_sigma_y_scale,
+            "lkj_eta": self._lkj_eta,
         }
         data.update(
             sg.surrogate_payload(
-                self._synthetic_points, self._left_bins, self._right_bins
+                self._synthetic_points,
+                self._sigma_points,
+                self._left_bins,
+                self._right_bins,
             )
         )
         return data
@@ -301,6 +305,7 @@ class _PiecewiseConstantBase:
         mc_seed: int,
         rtol: float = 0.01,
         num_replicates: Optional[int] = None,
+        min_replicates: Optional[int] = None,
         model=None,
     ) -> dict:
         import msprime
@@ -311,7 +316,7 @@ class _PiecewiseConstantBase:
         if model is None:
             model = msprime.SMCK(k=1)
 
-        _, det_ld_raw = det.expected_piecewise_constant(
+        det_pi_raw, det_ld_raw = det.expected_piecewise_constant(
             ne_values,
             t_boundaries,
             self._left_bins,
@@ -332,8 +337,10 @@ class _PiecewiseConstantBase:
             mc_kwargs["num_replicates"] = int(num_replicates)
         else:
             mc_kwargs["rtol"] = rtol
+        if min_replicates is not None:
+            mc_kwargs["min_replicates"] = int(min_replicates)
 
-        _, mc_ld_reps = montecarlo.expected_piecewise_constant(
+        mc_pi_reps, mc_ld_reps = montecarlo.expected_piecewise_constant(
             ne_values,
             t_boundaries,
             self._left_bins,
@@ -349,7 +356,12 @@ class _PiecewiseConstantBase:
             f"MC evaluation returned only {len(mc_ld_reps)} replicate(s); "
             "need at least 2 for a meaningful SE estimate."
         )
-        return sg.make_synthetic_point(det_ld, mc_ld_reps)
+        return {
+            "det_pi": float(np.asarray(det_pi_raw)),
+            "det_ld": det_ld,
+            "mc_pi_reps": np.asarray(mc_pi_reps),
+            "mc_ld_reps": mc_ld_reps,
+        }
 
     # ─── Active learning ──────────────────────────────────────────────────────
 
@@ -359,6 +371,7 @@ class _PiecewiseConstantBase:
         n_iter: int = 5,
         max_tolerance: float = 0.1,
         num_replicates: Optional[int] = None,
+        min_replicates: Optional[int] = None,
         strategy: str = "pathfinder",
         model=None,
         seed: Optional[int] = None,
@@ -375,6 +388,8 @@ class _PiecewiseConstantBase:
         rng = np.random.default_rng(seed)
 
         for iteration in range(n_iter):
+            # Sigma points are last-iteration only (locality assumption).
+            self._sigma_points = []
             draws = self._get_draws(n_points_per_iter, strategy, rng)
             ne_mean = draws["Ne_values"].mean(axis=0)
             t_mean = draws["t_boundaries"].mean(axis=0)
@@ -398,16 +413,18 @@ class _PiecewiseConstantBase:
                 ne_str = " ".join(f"Ne{k + 1}={v:,.0f}" for k, v in enumerate(ne_i))
                 t_str = " ".join(f"t{k + 1}={v:.1f}" for k, v in enumerate(t_i))
                 iterator.set_postfix_str(f"{ne_str} | {t_str}")
-                self._synthetic_points.append(
-                    self._mc_eval(
-                        draws["Ne_values"][i],
-                        draws["t_boundaries"][i],
-                        mc_seed,
-                        rtol=max_tolerance,
-                        num_replicates=num_replicates,
-                        model=model,
-                    )
+                raw = self._mc_eval(
+                    draws["Ne_values"][i],
+                    draws["t_boundaries"][i],
+                    mc_seed,
+                    rtol=max_tolerance,
+                    num_replicates=num_replicates,
+                    min_replicates=min_replicates,
+                    model=model,
                 )
+                bias_pt, sigma_pt = sg.make_points(raw)
+                self._synthetic_points.append(bias_pt)
+                self._sigma_points.append(sigma_pt)
 
     def _get_draws(self, n_draws: int, strategy: str, rng: np.random.Generator) -> dict:
         data = self.stan_data()
@@ -485,7 +502,8 @@ class TwoEpochDemography(_PiecewiseConstantBase):
         hsgp_m_ld: int = 6,
         n_quad: int = _DEFAULT_N_QUAD,
         gp_alpha_std: float = 0.005,
-        sigma_emp: Optional[np.ndarray] = None,
+        lkj_eta: float = 2.0,
+        log_sigma_y_scale: float = 1.0,
         prior: Optional[str] = None,
         parameters: str = _DEFAULT_PARAMETERS,
         transformed_parameters: str = _DEFAULT_TRANSFORMED_PARAMETERS,
@@ -509,7 +527,8 @@ class TwoEpochDemography(_PiecewiseConstantBase):
             hsgp_m_ld=hsgp_m_ld,
             n_quad=n_quad,
             gp_alpha_std=gp_alpha_std,
-            sigma_emp=sigma_emp,
+            lkj_eta=lkj_eta,
+            log_sigma_y_scale=log_sigma_y_scale,
             prior=prior,
             parameters=parameters,
             transformed_parameters=transformed_parameters,
@@ -543,7 +562,8 @@ class PiecewiseConstantDemography(_PiecewiseConstantBase):
         hsgp_m_ld: int = 6,
         n_quad: int = _DEFAULT_N_QUAD,
         gp_alpha_std: float = 0.005,
-        sigma_emp: Optional[np.ndarray] = None,
+        lkj_eta: float = 2.0,
+        log_sigma_y_scale: float = 1.0,
     ):
         self._init_common(
             diversity=diversity,
@@ -561,7 +581,8 @@ class PiecewiseConstantDemography(_PiecewiseConstantBase):
             hsgp_m_ld=hsgp_m_ld,
             n_quad=n_quad,
             gp_alpha_std=gp_alpha_std,
-            sigma_emp=sigma_emp,
+            lkj_eta=lkj_eta,
+            log_sigma_y_scale=log_sigma_y_scale,
             prior=prior,
             parameters=parameters,
             transformed_parameters=transformed_parameters,

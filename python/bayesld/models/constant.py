@@ -118,7 +118,8 @@ class ConstantDemography:
         hsgp_c: float = 1.5,
         hsgp_m_ld: int = 6,
         gp_alpha_std: float = 0.005,
-        sigma_emp: Optional[np.ndarray] = None,
+        lkj_eta: float = 2.0,
+        log_sigma_y_scale: float = 1.0,
         prior: Optional[str] = None,
         parameters: str = _DEFAULT_PARAMETERS,
         transformed_parameters: str = _DEFAULT_TRANSFORMED_PARAMETERS,
@@ -138,11 +139,11 @@ class ConstantDemography:
         self._hsgp_c = float(hsgp_c)
         self._hsgp_m_ld = int(hsgp_m_ld)
         self._gp_alpha_std = float(gp_alpha_std)
-        self._sigma_emp = (
-            np.asarray(sigma_emp, dtype=float) if sigma_emp is not None else None
-        )
+        self._lkj_eta = float(lkj_eta)
+        self._log_sigma_y_scale = float(log_sigma_y_scale)
 
         self._synthetic_points: list[dict] = []
+        self._sigma_points: list[dict] = []
 
         self._prior = (
             prior
@@ -178,10 +179,8 @@ class ConstantDemography:
 
     def stan_data(self) -> dict:
         log_ld_mu, log_ld_sig = sg.compute_standardization(self._ld)
-        sigma_emp = (
-            self._sigma_emp
-            if self._sigma_emp is not None
-            else sg.compute_sigma_emp(self._diversity, self._ld)
+        log_sigma_y_loc, log_sigma_y_scale = sg.sigma_prior_hyperparams(
+            self._diversity, self._ld, self._log_sigma_y_scale
         )
         data = {
             "n_bins": int(len(self._left_bins)),
@@ -197,11 +196,16 @@ class ConstantDemography:
             "gp_alpha_std": self._gp_alpha_std,
             "log_ld_mu": log_ld_mu,
             "log_ld_sig": log_ld_sig,
-            "sigma_emp": sigma_emp,
+            "log_sigma_y_loc": log_sigma_y_loc,
+            "log_sigma_y_scale": log_sigma_y_scale,
+            "lkj_eta": self._lkj_eta,
         }
         data.update(
             sg.surrogate_payload(
-                self._synthetic_points, self._left_bins, self._right_bins
+                self._synthetic_points,
+                self._sigma_points,
+                self._left_bins,
+                self._right_bins,
             )
         )
         return data
@@ -278,6 +282,7 @@ class ConstantDemography:
         mc_seed: int,
         rtol: float = 0.01,
         num_replicates: Optional[int] = None,
+        min_replicates: Optional[int] = None,
         model=None,
     ) -> dict:
         import msprime
@@ -288,7 +293,7 @@ class ConstantDemography:
         if model is None:
             model = msprime.SMCK(k=1)
 
-        _, det_ld_raw = det.expected_constant(
+        det_pi_raw, det_ld_raw = det.expected_constant(
             ne,
             self._left_bins,
             self._right_bins,
@@ -308,8 +313,10 @@ class ConstantDemography:
             mc_kwargs["num_replicates"] = int(num_replicates)
         else:
             mc_kwargs["rtol"] = rtol
+        if min_replicates is not None:
+            mc_kwargs["min_replicates"] = int(min_replicates)
 
-        _, mc_ld_reps = montecarlo.expected_constant(
+        mc_pi_reps, mc_ld_reps = montecarlo.expected_constant(
             ne,
             self._left_bins,
             self._right_bins,
@@ -324,7 +331,12 @@ class ConstantDemography:
             f"MC evaluation returned only {len(mc_ld_reps)} replicate(s); "
             "need at least 2 for a meaningful SE estimate."
         )
-        return sg.make_synthetic_point(det_ld, mc_ld_reps)
+        return {
+            "det_pi": float(np.asarray(det_pi_raw)),
+            "det_ld": det_ld,
+            "mc_pi_reps": np.asarray(mc_pi_reps),
+            "mc_ld_reps": mc_ld_reps,
+        }
 
     # ─── Active learning ──────────────────────────────────────────────────────
 
@@ -334,6 +346,7 @@ class ConstantDemography:
         n_iter: int = 5,
         max_tolerance: float = 0.1,
         num_replicates: Optional[int] = None,
+        min_replicates: Optional[int] = None,
         strategy: str = "pathfinder",
         model=None,
         seed: Optional[int] = None,
@@ -350,6 +363,8 @@ class ConstantDemography:
         rng = np.random.default_rng(seed)
 
         for iteration in range(n_iter):
+            # Sigma points are last-iteration only (locality assumption).
+            self._sigma_points = []
             ne_draws = self._get_ne_draws(n_points_per_iter, strategy, rng)
             print(
                 f"[{strategy.upper()} iter={iteration + 1}/{n_iter} "
@@ -366,15 +381,17 @@ class ConstantDemography:
             for _, ne in iterator:
                 mc_seed = int(rng.integers(2**31))
                 iterator.set_postfix_str(f"Ne={float(ne):,.0f}")
-                self._synthetic_points.append(
-                    self._mc_eval(
-                        float(ne),
-                        mc_seed,
-                        rtol=max_tolerance,
-                        num_replicates=num_replicates,
-                        model=model,
-                    )
+                raw = self._mc_eval(
+                    float(ne),
+                    mc_seed,
+                    rtol=max_tolerance,
+                    num_replicates=num_replicates,
+                    min_replicates=min_replicates,
+                    model=model,
                 )
+                bias_pt, sigma_pt = sg.make_points(raw)
+                self._synthetic_points.append(bias_pt)
+                self._sigma_points.append(sigma_pt)
 
     def _get_ne_draws(
         self, n_draws: int, strategy: str, rng: np.random.Generator

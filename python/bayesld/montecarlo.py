@@ -90,6 +90,7 @@ def _parallel_mc(
     num_replicates,
     num_workers,
     rtol,
+    min_replicates=None,
 ):
     """Run MC simulations in parallel via joblib.
 
@@ -158,7 +159,7 @@ def _parallel_mc(
             _max_relative_se(pi_arr[:, np.newaxis]),
             _max_relative_se(ld_arr),
         )
-        if rse < rtol:
+        if rse < rtol and (min_replicates is None or len(pi_all) >= min_replicates):
             return pi_arr, ld_arr
 
     raise RuntimeError(
@@ -195,6 +196,7 @@ def expected_constant(
     model=_DEFAULT_MODEL,
     num_workers=-1,
     rtol=None,
+    min_replicates=None,
 ):
     """
     Expected genetic diversity and LD under constant Ne via Monte Carlo.
@@ -241,6 +243,7 @@ def expected_constant(
         num_replicates,
         num_workers,
         rtol,
+        min_replicates=min_replicates,
     )
 
 
@@ -261,6 +264,7 @@ def expected_piecewise_exponential(
     model=_DEFAULT_MODEL,
     num_workers=-1,
     rtol=None,
+    min_replicates=None,
 ):
     """
     Expected genetic diversity and LD under a two-phase exponential demography via Monte Carlo.
@@ -313,6 +317,7 @@ def expected_piecewise_exponential(
         num_replicates,
         num_workers,
         rtol,
+        min_replicates=min_replicates,
     )
 
 
@@ -334,6 +339,7 @@ def expected_exponential_carrying_capacity(
     model=_DEFAULT_MODEL,
     num_workers=-1,
     rtol=None,
+    min_replicates=None,
 ):
     """
     Expected genetic diversity and LD under an exponential carrying-capacity demography via MC.
@@ -392,6 +398,65 @@ def expected_exponential_carrying_capacity(
         num_replicates,
         num_workers,
         rtol,
+        min_replicates=min_replicates,
+    )
+
+
+def expected_exp_two_constant(
+    Ne_c,
+    Ne_a,
+    Ne_b,
+    t0,
+    t1,
+    alpha,
+    left_bins,
+    right_bins,
+    mutation_rate,
+    recombination_rate,
+    sequence_length,
+    sample_size,
+    random_seed,
+    num_replicates=_SENTINEL,
+    ploidy=2,
+    model=_DEFAULT_MODEL,
+    num_workers=-1,
+    rtol=None,
+    min_replicates=None,
+):
+    """
+    Expected genetic diversity and LD under a 3-epoch demography via Monte Carlo.
+
+    Ne(t) = Ne_c * exp(-alpha * t)   for t in [0, t0)
+    Ne(t) = Ne_a                     for t in [t0, t1)
+    Ne(t) = Ne_b                     for t >= t1
+    """
+    num_replicates, rtol = _validate_stopping(num_replicates, rtol)
+    left_bins = np.asarray(left_bins)
+    right_bins = np.asarray(right_bins)
+
+    def build_demography(ne_c, ne_a, ne_b, t0_, t1_, alpha_):
+        d = msprime.Demography()
+        d.add_population(name="pop0", initial_size=ne_c, growth_rate=alpha_)
+        d.add_population_parameters_change(time=t0_, initial_size=ne_a, growth_rate=0)
+        d.add_population_parameters_change(time=t1_, initial_size=ne_b, growth_rate=0)
+        return d
+
+    return _parallel_mc(
+        build_demography,
+        (Ne_c, Ne_a, Ne_b, t0, t1, alpha),
+        left_bins,
+        right_bins,
+        mutation_rate,
+        recombination_rate,
+        sequence_length,
+        sample_size,
+        ploidy,
+        model,
+        random_seed,
+        num_replicates,
+        num_workers,
+        rtol,
+        min_replicates=min_replicates,
     )
 
 
@@ -410,6 +475,7 @@ def expected_piecewise_constant(
     model=_DEFAULT_MODEL,
     num_workers=-1,
     rtol=None,
+    min_replicates=None,
 ):
     """
     Expected genetic diversity and LD under a piecewise-constant demography via Monte Carlo.
@@ -464,4 +530,5 @@ def expected_piecewise_constant(
         num_replicates,
         num_workers,
         rtol,
+        min_replicates=min_replicates,
     )

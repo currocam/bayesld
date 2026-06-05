@@ -162,7 +162,8 @@ class ExpTwoConstantDemography:
         hsgp_m_ld: int = 6,
         n_quad: int = _DEFAULT_N_QUAD,
         gp_alpha_std: float = 0.005,
-        sigma_emp: Optional[np.ndarray] = None,
+        lkj_eta: float = 2.0,
+        log_sigma_y_scale: float = 1.0,
         prior: Optional[str] = None,
         parameters: str = _DEFAULT_PARAMETERS,
         transformed_parameters: str = _DEFAULT_TRANSFORMED_PARAMETERS,
@@ -182,13 +183,13 @@ class ExpTwoConstantDemography:
         self._hsgp_c = float(hsgp_c)
         self._hsgp_m_ld = int(hsgp_m_ld)
         self._gp_alpha_std = float(gp_alpha_std)
-        self._sigma_emp = (
-            np.asarray(sigma_emp, dtype=float) if sigma_emp is not None else None
-        )
+        self._lkj_eta = float(lkj_eta)
+        self._log_sigma_y_scale = float(log_sigma_y_scale)
 
         self._gl_nodes, self._gl_weights = np.polynomial.legendre.leggauss(n_quad)
 
         self._synthetic_points: list[dict] = []
+        self._sigma_points: list[dict] = []
 
         self._prior = (
             prior
@@ -224,10 +225,8 @@ class ExpTwoConstantDemography:
 
     def stan_data(self) -> dict:
         log_ld_mu, log_ld_sig = sg.compute_standardization(self._ld)
-        sigma_emp = (
-            self._sigma_emp
-            if self._sigma_emp is not None
-            else sg.compute_sigma_emp(self._diversity, self._ld)
+        log_sigma_y_loc, log_sigma_y_scale = sg.sigma_prior_hyperparams(
+            self._diversity, self._ld, self._log_sigma_y_scale
         )
         data = {
             "n_bins": int(len(self._left_bins)),
@@ -246,11 +245,16 @@ class ExpTwoConstantDemography:
             "gp_alpha_std": self._gp_alpha_std,
             "log_ld_mu": log_ld_mu,
             "log_ld_sig": log_ld_sig,
-            "sigma_emp": sigma_emp,
+            "log_sigma_y_loc": log_sigma_y_loc,
+            "log_sigma_y_scale": log_sigma_y_scale,
+            "lkj_eta": self._lkj_eta,
         }
         data.update(
             sg.surrogate_payload(
-                self._synthetic_points, self._left_bins, self._right_bins
+                self._synthetic_points,
+                self._sigma_points,
+                self._left_bins,
+                self._right_bins,
             )
         )
         return data
@@ -332,6 +336,7 @@ class ExpTwoConstantDemography:
         mc_seed: int,
         rtol: float = 0.01,
         num_replicates: Optional[int] = None,
+        min_replicates: Optional[int] = None,
         model=None,
     ) -> dict:
         import msprime
@@ -342,7 +347,7 @@ class ExpTwoConstantDemography:
         if model is None:
             model = msprime.SMCK(k=1)
 
-        _, det_ld_raw = det.expected_exp_two_constant(
+        det_pi_raw, det_ld_raw = det.expected_exp_two_constant(
             ne_c,
             ne_a,
             ne_b,
@@ -367,8 +372,10 @@ class ExpTwoConstantDemography:
             mc_kwargs["num_replicates"] = int(num_replicates)
         else:
             mc_kwargs["rtol"] = rtol
+        if min_replicates is not None:
+            mc_kwargs["min_replicates"] = int(min_replicates)
 
-        _, mc_ld_reps = montecarlo.expected_exp_two_constant(
+        mc_pi_reps, mc_ld_reps = montecarlo.expected_exp_two_constant(
             ne_c,
             ne_a,
             ne_b,
@@ -388,7 +395,12 @@ class ExpTwoConstantDemography:
             f"MC evaluation returned only {len(mc_ld_reps)} replicate(s); "
             "need at least 2 for a meaningful SE estimate."
         )
-        return sg.make_synthetic_point(det_ld, mc_ld_reps)
+        return {
+            "det_pi": float(np.asarray(det_pi_raw)),
+            "det_ld": det_ld,
+            "mc_pi_reps": np.asarray(mc_pi_reps),
+            "mc_ld_reps": mc_ld_reps,
+        }
 
     # ─── Active learning ──────────────────────────────────────────────────────
 
@@ -398,6 +410,7 @@ class ExpTwoConstantDemography:
         n_iter: int = 5,
         max_tolerance: float = 0.1,
         num_replicates: Optional[int] = None,
+        min_replicates: Optional[int] = None,
         strategy: str = "pathfinder",
         model=None,
         seed: Optional[int] = None,
@@ -414,6 +427,8 @@ class ExpTwoConstantDemography:
         rng = np.random.default_rng(seed)
 
         for iteration in range(n_iter):
+            # Sigma points are last-iteration only (locality assumption).
+            self._sigma_points = []
             draws = self._get_draws(n_points_per_iter, strategy, rng)
             print(
                 f"[{strategy.upper()} iter={iteration + 1}/{n_iter} "
@@ -438,20 +453,22 @@ class ExpTwoConstantDemography:
                     f"t1={float(draws['t1'][i]):.1f} "
                     f"alpha={float(draws['alpha'][i]):.3g}"
                 )
-                self._synthetic_points.append(
-                    self._mc_eval(
-                        float(draws["Ne_c"][i]),
-                        float(draws["Ne_a"][i]),
-                        float(draws["Ne_b"][i]),
-                        float(draws["t0"][i]),
-                        float(draws["t1"][i]),
-                        float(draws["alpha"][i]),
-                        mc_seed,
-                        rtol=max_tolerance,
-                        num_replicates=num_replicates,
-                        model=model,
-                    )
+                raw = self._mc_eval(
+                    float(draws["Ne_c"][i]),
+                    float(draws["Ne_a"][i]),
+                    float(draws["Ne_b"][i]),
+                    float(draws["t0"][i]),
+                    float(draws["t1"][i]),
+                    float(draws["alpha"][i]),
+                    mc_seed,
+                    rtol=max_tolerance,
+                    num_replicates=num_replicates,
+                    min_replicates=min_replicates,
+                    model=model,
                 )
+                bias_pt, sigma_pt = sg.make_points(raw)
+                self._synthetic_points.append(bias_pt)
+                self._sigma_points.append(sigma_pt)
 
     def _get_draws(self, n_draws: int, strategy: str, rng: np.random.Generator) -> dict:
         data = self.stan_data()
