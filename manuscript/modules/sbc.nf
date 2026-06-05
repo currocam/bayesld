@@ -94,6 +94,7 @@ process SBC_CONSTANT_COLLECT {
 
     script:
     """
+    # Update
     ${projectDir}/bin/sbc/collect.py \
         ${name}.pkl \
         --batches   ${batch_pkls} \
@@ -246,6 +247,7 @@ process SBC_PIECEWISE_CONSTANT_COLLECT {
 
     script:
     """
+    #Update
     ${projectDir}/bin/sbc/collect.py \
         ${name}.pkl \
         --batches   ${batch_pkls} \
@@ -381,6 +383,7 @@ process SBC_PIECEWISE_EXPONENTIAL_COLLECT {
 
     script:
     """
+    # update
     ${projectDir}/bin/sbc/collect.py \
         ${name}.pkl \
         --batches   ${batch_pkls} \
