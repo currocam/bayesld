@@ -25,7 +25,9 @@ Usage:
 """
 
 import argparse
+import os
 import pickle
+import re
 import sys
 
 import numpy as np
@@ -34,6 +36,13 @@ import numpy as np
 def load(path):
     with open(path, "rb") as f:
         return pickle.load(f)
+
+
+def _numeric_key(path):
+    """Sort by all integers in the basename, so `_2.pkl` < `_10.pkl` and
+    `_001_009` < `_002_000` regardless of zero-padding."""
+    name = os.path.basename(str(path))
+    return tuple(int(n) for n in re.findall(r"\d+", name))
 
 
 def main():
@@ -45,10 +54,10 @@ def main():
     parser.add_argument("--no-bias", nargs="+", required=True)
     args = parser.parse_args()
 
-    batches = [load(p) for p in sorted(args.batches)]
-    learn = [load(p) for p in sorted(args.learn)]
-    corrected = [load(p) for p in sorted(args.corrected)]
-    no_bias = [load(p) for p in sorted(args.no_bias)]
+    batches = [load(p) for p in sorted(args.batches, key=_numeric_key)]
+    learn = [load(p) for p in sorted(args.learn, key=_numeric_key)]
+    corrected = [load(p) for p in sorted(args.corrected, key=_numeric_key)]
+    no_bias = [load(p) for p in sorted(args.no_bias, key=_numeric_key)]
 
     n_datasets = sum(len(b["datasets"]) for b in batches)
     assert len(corrected) == n_datasets, (
