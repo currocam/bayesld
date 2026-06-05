@@ -8,14 +8,6 @@
 """
 SBC collect — merges all batches for one (model, prior) into a single pkl.
 
-Batch pkls supply draw arrays, datasets, metadata, and a model-specific "prior" dict.
-Learn pkls are per-dataset and supply `idata_pathfinder`.
-Corrected pkls are per-dataset and supply the MCMC `idata`.
-No-bias pkls are per-batch and supply `idatas` lists.
-
-Per-dataset filenames embed batch_idx and ds_idx zero-padded, so filename sort
-matches the dataset order produced by flattening batches in batch_idx order.
-
 Usage:
     collect.py <output.pkl>
                --batches   batch_0.pkl   batch_1.pkl   ...
@@ -32,17 +24,28 @@ import sys
 
 import numpy as np
 
+_BATCH_RE = re.compile(r"_(\d+)\.pkl$")
+_DS_RE = re.compile(r"_(\d+)_(\d+)\.pkl$")
 
+
+# This should be much easier, but I'm learning nextflow ...
 def load(path):
     with open(path, "rb") as f:
         return pickle.load(f)
 
 
-def _numeric_key(path):
-    """Sort by all integers in the basename, so `_2.pkl` < `_10.pkl` and
-    `_001_009` < `_002_000` regardless of zero-padding."""
-    name = os.path.basename(str(path))
-    return tuple(int(n) for n in re.findall(r"\d+", name))
+def _parse_batch(path):
+    m = _BATCH_RE.search(os.path.basename(str(path)))
+    if not m:
+        raise ValueError(f"Cannot parse trailing _<batch>.pkl from {path}")
+    return int(m.group(1))
+
+
+def _parse_batch_ds(path):
+    m = _DS_RE.search(os.path.basename(str(path)))
+    if not m:
+        raise ValueError(f"Cannot parse trailing _<batch>_<ds>.pkl from {path}")
+    return int(m.group(1)), int(m.group(2))
 
 
 def main():
@@ -54,21 +57,69 @@ def main():
     parser.add_argument("--no-bias", nargs="+", required=True)
     args = parser.parse_args()
 
-    batches = [load(p) for p in sorted(args.batches, key=_numeric_key)]
-    learn = [load(p) for p in sorted(args.learn, key=_numeric_key)]
-    corrected = [load(p) for p in sorted(args.corrected, key=_numeric_key)]
-    no_bias = [load(p) for p in sorted(args.no_bias, key=_numeric_key)]
+    batch_paths = sorted(args.batches, key=_parse_batch)
+    nobias_paths = sorted(args.no_bias, key=_parse_batch)
+    learn_paths = sorted(args.learn, key=_parse_batch_ds)
+    corrected_paths = sorted(args.corrected, key=_parse_batch_ds)
 
-    n_datasets = sum(len(b["datasets"]) for b in batches)
-    assert len(corrected) == n_datasets, (
-        f"Expected {n_datasets} corrected pkls (one per dataset), got {len(corrected)}"
+    batches = [load(p) for p in batch_paths]
+    no_bias = [load(p) for p in nobias_paths]
+    learn = [load(p) for p in learn_paths]
+    corrected = [load(p) for p in corrected_paths]
+
+    # Verify per-batch files form a contiguous 0..N-1 sequence.
+    n_batches = len(batches)
+    batch_indices = [_parse_batch(p) for p in batch_paths]
+    nobias_indices = [_parse_batch(p) for p in nobias_paths]
+    expected_batches = list(range(n_batches))
+    assert batch_indices == expected_batches, (
+        f"Batch filenames are not contiguous 0..{n_batches - 1}: {batch_indices}"
     )
-    assert len(learn) == n_datasets, (
-        f"Expected {n_datasets} learn pkls (one per dataset), got {len(learn)}"
+    assert nobias_indices == expected_batches, (
+        f"No-bias filenames don't match batch indices: {nobias_indices} vs {expected_batches}"
     )
-    assert len(no_bias) == len(batches), (
-        f"Expected {len(batches)} no-bias pkls (one per batch), got {len(no_bias)}"
+
+    batch_size = len(batches[0]["datasets"])
+    for b in batches:
+        assert len(b["datasets"]) == batch_size, (
+            "Batch sizes are not uniform across batches — collect assumes they are"
+        )
+    n_datasets = n_batches * batch_size
+
+    expected_pairs = [(b, d) for b in range(n_batches) for d in range(batch_size)]
+    learn_pairs = [_parse_batch_ds(p) for p in learn_paths]
+    corrected_pairs = [_parse_batch_ds(p) for p in corrected_paths]
+    assert learn_pairs == expected_pairs, (
+        f"learn filenames don't form a complete (batch, ds) grid; "
+        f"got {len(learn_pairs)} files, expected {len(expected_pairs)}"
     )
+    assert corrected_pairs == expected_pairs, (
+        f"corrected filenames don't form a complete (batch, ds) grid; "
+        f"got {len(corrected_pairs)} files, expected {len(expected_pairs)}"
+    )
+
+    # Cross-check filename ds_idx against the dataset_idx embedded by
+    # learn_corrected.py / sample_corrected.py.
+    for (_, ds_idx), bundle, path in zip(learn_pairs, learn, learn_paths):
+        if "dataset_idx" in bundle and bundle["dataset_idx"] != ds_idx:
+            raise AssertionError(
+                f"learn pkl {path}: filename ds_idx={ds_idx} but "
+                f"bundle['dataset_idx']={bundle['dataset_idx']}"
+            )
+    for (_, ds_idx), bundle, path in zip(corrected_pairs, corrected, corrected_paths):
+        if "dataset_idx" in bundle and bundle["dataset_idx"] != ds_idx:
+            raise AssertionError(
+                f"corrected pkl {path}: filename ds_idx={ds_idx} but "
+                f"bundle['dataset_idx']={bundle['dataset_idx']}"
+            )
+
+    # Per-batch no_bias lists are flattened in batch order — verify count.
+    for b_idx, nb in enumerate(no_bias):
+        if len(nb["idatas"]) != batch_size:
+            raise AssertionError(
+                f"no_bias batch {b_idx} has {len(nb['idatas'])} idatas, "
+                f"expected {batch_size}"
+            )
 
     result = {
         "datasets": [ds for b in batches for ds in b["datasets"]],
@@ -76,6 +127,10 @@ def main():
         "idatas_pathfinder": [l["idata_pathfinder"] for l in learn],
         "idatas_no_bias": [idata for n in no_bias for idata in n["idatas"]],
     }
+    assert len(result["datasets"]) == n_datasets
+    assert len(result["idatas_corrected"]) == n_datasets
+    assert len(result["idatas_pathfinder"]) == n_datasets
+    assert len(result["idatas_no_bias"]) == n_datasets
 
     # Dynamically collect remaining keys from the first batch
     first_batch = batches[0]
@@ -103,7 +158,7 @@ def main():
         pickle.dump(result, f)
 
     print(
-        f"Collected {len(batches)} batches → {n_datasets} datasets → {args.output}",
+        f"Collected {n_batches} batches → {n_datasets} datasets → {args.output}",
         file=sys.stderr,
     )
 

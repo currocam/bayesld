@@ -4,6 +4,7 @@
 # dependencies = [
 #     "arviz>=1.1",
 #     "bayesld @ git+https://github.com/currocam/bayesld.git@8f2e8b9",
+#     "msprime",
 #     "numpy",
 # ]
 # ///
@@ -20,6 +21,7 @@ import argparse
 import pickle
 
 import arviz as az
+import msprime
 import numpy as np
 from bayesld.models import PiecewiseConstantDemography
 
@@ -31,8 +33,8 @@ PATHFINDER_DRAWS = 1000
 def _build_model(batch_meta, pi, ld):
     prior = batch_meta["prior"]
     parameters = """\
-    real log_Ne1;
-    real log_Ne2;
+    real<offset=log_ne_offset> log_Ne1;
+    real<offset=log_ne_offset> log_Ne2;
     real log_t0;"""
     transformed_parameters = """\
     real<lower=0> Ne1 = exp(log_Ne1);
@@ -82,6 +84,7 @@ def main():
         n_points_per_iter=args.n_points_per_iter,
         n_iter=args.n_iter,
         strategy="pathfinder",
+        model=msprime.SMCK(k=1),
         max_tolerance=0.1,
         seed=SEED,
     )

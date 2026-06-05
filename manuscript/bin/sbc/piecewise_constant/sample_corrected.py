@@ -28,8 +28,8 @@ SEED = 391237
 def _build_model(batch_meta, pi, ld):
     prior = batch_meta["prior"]
     parameters = """\
-    real log_Ne1;
-    real log_Ne2;
+    real<offset=log_ne_offset> log_Ne1;
+    real<offset=log_ne_offset> log_Ne2;
     real log_t0;"""
     transformed_parameters = """\
     real<lower=0> Ne1 = exp(log_Ne1);
@@ -73,7 +73,7 @@ def main():
     model.add_synthetic_points(bundle["synthetic_points"])
 
     idata = model.sample(
-        iter_warmup=2000, iter_sampling=2000, chains=1, seed=SEED
+        iter_warmup=6000, iter_sampling=2000, chains=1, seed=SEED
     )
 
     with open(args.output, "wb") as f:
