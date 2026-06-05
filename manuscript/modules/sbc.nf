@@ -187,7 +187,7 @@ process SBC_PIECEWISE_CONSTANT_LEARN_CORRECTED {
     script:
     tag = String.format("%03d_%03d", batch_idx, ds_idx)
     """
-    # update 3
+    # update 4
     ${projectDir}/bin/sbc/piecewise_constant/learn_corrected.py \
         ${batch_pkl} \
         ${ds_idx} \
