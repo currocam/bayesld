@@ -70,6 +70,7 @@ def main():
     pi, ld = bundle["dataset"]
     model = _build_model(bundle["batch_meta"], pi, ld)
     model.add_synthetic_points(bundle["synthetic_points"])
+    model._sigma_points = list(bundle["sigma_points"])
 
     idata = model.sample(
         iter_warmup=6000, iter_sampling=2000, chains=1, seed=SEED

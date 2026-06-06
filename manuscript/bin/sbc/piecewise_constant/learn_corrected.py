@@ -109,6 +109,7 @@ def main():
         "dataset": (pi, ld),
         "dataset_idx": args.dataset_idx,
         "synthetic_points": model.synthetic_points,
+        "sigma_points": list(model._sigma_points),
         "idata_pathfinder": idata_pathfinder,
     }
     with open(args.output, "wb") as f:
