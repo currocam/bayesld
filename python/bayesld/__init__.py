@@ -325,8 +325,7 @@ def data_from_vcf(
     }
 
 
-from . import models, montecarlo
-from .models import ConstantDemography
+from . import montecarlo
 
 __doc__ = _bayesld.__doc__
 if hasattr(_bayesld, "__all__"):

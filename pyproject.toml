@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "bayesld"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
@@ -21,14 +21,9 @@ dependencies = [
     "dill>=0.4.1",
     "jax>=0.4.13",
     "joblib>=1.0.0",
-    "marimo>=0.20.4",
-    "matplotlib>=3.10.9",
     "matplotlib-label-lines>=0.8.1",
     "msprime>=1.4.0",
-    "multiprocess>=0.70.19",
     "numpy",
-    "scienceplots>=2.2.1",
-    "stdpopsim>=0.3.0",
     "tqdm>=4.67.1",
     "tskit>=0.5.7",
     "xarray>=2024.9.0",
@@ -46,6 +41,9 @@ markers = [
     "slow: marks tests as slow (run with --run-slow)",
 ]
 addopts = "-m 'not slow'"
+
+[tool.uv]
+package = false
 
 [tool.maturin]
 python-source = "python"

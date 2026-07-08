@@ -145,6 +145,7 @@ def _parallel_mc(
             # `smc(k)` from msprime has right now an unresolved bug
             # https://github.com/tskit-dev/msprime/pull/2524
             import warnings
+
             warnings.warn(f"MC batch failed: {_e}", stacklevel=2)
             continue
         pi_all.extend(pi_batch)
