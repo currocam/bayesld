@@ -51,4 +51,4 @@ if (n_sigma > 0) {
 }
 
 // ── Observation model: joint MVN over real windows ──
-for (w in 1:num_windows) y_obs[w] ~ multi_normal_cholesky(mu_y, L_Sigma);
+y_obs ~ multi_normal_cholesky(mu_y, L_Sigma);

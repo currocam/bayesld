@@ -120,6 +120,24 @@ def test_build_demography_matches_grid():
     assert times == [50.0, 200.0]
 
 
+def test_constant_data_includes_fixed_grid():
+    from bayesld.inference import RandomWalk
+
+    m = RandomWalk(grid=GRID).with_data(
+        mean_diversity=np.array([4e-4]),
+        mean_ld=np.ones((1, len(LEFT_BINS))) * 0.001,
+        left_bins=LEFT_BINS,
+        right_bins=RIGHT_BINS,
+        recombination_rate=RECOMBINATION_RATE,
+        mutation_rate=MUTATION_RATE,
+        num_samples=20,
+        sequence_length=SEQUENCE_LENGTH,
+    )
+    const = m._constant_data()
+    assert np.allclose(const["grid"].values, GRID)
+    assert list(const["grid"].dims) == ["boundary"]
+
+
 # ── Slow: Stan compilation + builder + active learning ──────────────────────────
 
 
@@ -192,6 +210,7 @@ def test_sample_returns_posterior(compiled_model, data):
     assert "Ne_values" in idata.posterior
     assert idata.posterior["Ne_values"].sizes["epoch"] == len(GRID) + 1
     assert "steps" in idata.posterior
+    assert np.allclose(idata.constant_data["grid"].values, GRID)
 
 
 @pytest.mark.slow

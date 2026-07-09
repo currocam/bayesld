@@ -60,6 +60,118 @@ def test_sim_sufficient_stats_replicates_and_rtol_mutually_exclusive():
         )
 
 
+# ── Fast: simplified posterior layout ─────────────────────────────────────────
+
+
+def test_simplify_posterior_drops_surrogate_vars():
+    import xarray as xr
+
+    from bayesld.inference._base import _simplify_posterior_dataset
+
+    n_bins = len(LEFT_BINS)
+    n_epochs = 2
+    coords = {
+        "bin": (LEFT_BINS + RIGHT_BINS) / 2.0,
+        "epoch": np.arange(n_epochs),
+        "boundary": np.arange(n_epochs - 1),
+    }
+    post = xr.Dataset(
+        {
+            "Ne_values": (
+                ["chain", "draw", "epoch"],
+                np.ones((1, 2, n_epochs)),
+            ),
+            "t_boundaries": (
+                ["chain", "draw", "boundary"],
+                np.array([[[30.0], [40.0]]]),
+            ),
+            "gp_bias_ld": (
+                ["chain", "draw", "bin"],
+                np.zeros((1, 2, n_bins)),
+            ),
+            "corrected_expected_ld": (
+                ["chain", "draw", "bin"],
+                np.ones((1, 2, n_bins)),
+            ),
+            "beta_ld": (
+                ["chain", "draw", "beta_ld_dim_0", "bin"],
+                np.zeros((1, 2, 6, n_bins)),
+            ),
+            "approx_expected_ld": (
+                ["chain", "draw", "bin"],
+                np.zeros((1, 2, n_bins)),
+            ),
+        },
+        coords={
+            "chain": [0],
+            "draw": [0, 1],
+            "epoch": coords["epoch"],
+            "boundary": coords["boundary"],
+            "bin": coords["bin"],
+        },
+    )
+    simplified = _simplify_posterior_dataset(post, coords=coords)
+
+    assert "beta_ld" not in simplified
+    assert "approx_expected_ld" not in simplified
+    assert "gp_bias_ld" in simplified
+    assert "corrected_expected_ld" in simplified
+    assert "t_boundaries" in simplified
+    assert simplified["t_boundaries"].sizes["boundary"] == n_epochs - 1
+    assert simplified["t_boundaries"].values[0, 0, 0] == 30.0
+    assert "boundary" in simplified.dims
+    assert not any("_dim_" in d for d in simplified.dims)
+
+
+def test_simplify_posterior_datatree_assignment_works_with_arviz_summary():
+    import arviz as az
+    import xarray as xr
+
+    from bayesld.inference._base import _simplify_posterior_dataset
+
+    n_bins = len(LEFT_BINS)
+    post = xr.Dataset(
+        {
+            "Ne_values": (["chain", "draw", "epoch"], np.ones((1, 2, 1))),
+            "beta_ld": (
+                ["chain", "draw", "beta_ld_dim_0", "bin"],
+                np.zeros((1, 2, 6, n_bins)),
+            ),
+        },
+        coords={
+            "chain": [0],
+            "draw": [0, 1],
+            "epoch": [0],
+            "bin": np.arange(n_bins),
+        },
+    )
+    idata = xr.DataTree.from_dict({"posterior": post})
+    idata["posterior"] = _simplify_posterior_dataset(
+        post, coords={"epoch": [0], "bin": np.arange(n_bins)}
+    )
+    assert isinstance(idata.posterior, xr.DataTree)
+    assert "beta_ld" not in idata.posterior
+    az.summary(idata, var_names=["Ne_values"])
+
+
+def test_read_transition_times_cmdstanpy_like_fit():
+    """Pathfinder/MCMC fits must not receive ``has_variable`` (cmdstanpy quirk)."""
+    from bayesld.inference import PiecewiseConstant
+
+    class _PathfinderLike:
+        def stan_variable(self, name: str) -> np.ndarray:
+            if name == "Ne_values":
+                return np.ones((5, 2))
+            if name == "t_boundaries":
+                return np.full((5, 1), 30.0)
+            raise KeyError(name)
+
+    m = PiecewiseConstant(num_epochs=2)
+    t = m._read_transition_times(_PathfinderLike(), n_epochs=2)
+    assert t.shape == (5, 1)
+    assert np.all(t == 30.0)
+
+
 # ── Slow: Stan compilation + builder + active learning ──────────────────────────
 
 
@@ -162,7 +274,68 @@ def test_sample_returns_posterior(compiled_model, data):
         sequence_length=SEQUENCE_LENGTH,
     )
     idata = m.sample(draws=50, tune=50, chains=1)
-    assert idata.posterior["Ne_values"].shape[-1] == 2
+    import xarray as xr
+
+    assert isinstance(idata, xr.DataTree)
+    post = idata.posterior
+    assert post["Ne_values"].sizes["epoch"] == 2
+    assert "t_boundaries" in post
+    assert "gp_bias_ld" in post
+    assert "corrected_expected_ld" in post
+    assert "beta_ld" not in post
+    assert "boundary" in post.dims
+    assert "log_likelihood" in idata
+    assert "posterior_predictive" in idata
+    assert "observed_data" in idata
+    ppc = idata.posterior_predictive
+    obs = idata.observed_data
+    assert set(ppc.data_vars) >= {"observed_pi", "observed_ld", "mean_pi", "mean_ld"}
+    assert set(obs.data_vars) >= {"observed_pi", "observed_ld", "mean_pi", "mean_ld"}
+    np.testing.assert_allclose(
+        ppc["mean_ld"].values,
+        ppc["observed_ld"].mean(dim=["window"]).values,
+    )
+    np.testing.assert_allclose(
+        obs["mean_ld"].values,
+        obs["observed_ld"].mean(dim="window").values,
+    )
+    np.testing.assert_allclose(
+        ppc["mean_pi"].values,
+        ppc["observed_pi"].mean(dim=["window"]).values,
+    )
+    np.testing.assert_allclose(
+        obs["mean_pi"].values,
+        obs["observed_pi"].mean(dim="window").values,
+    )
+    const = idata.constant_data
+    assert set(const.data_vars) == {"left", "right", "midpoint"}
+    assert list(const["left"].dims) == ["bin"]
+    np.testing.assert_allclose(const["left"].values, LEFT_BINS)
+    np.testing.assert_allclose(const["right"].values, RIGHT_BINS)
+    np.testing.assert_allclose(
+        const["midpoint"].values, (LEFT_BINS + RIGHT_BINS) / 2.0, rtol=0, atol=1e-5
+    )
+    demographies = m.to_msprime_demography(idata)
+    assert len(demographies) == 50
+
+
+@pytest.mark.slow
+def test_sample_simplify_false_retains_full_posterior(compiled_model, data):
+    pi, ld = data
+    m = compiled_model.with_data(
+        mean_diversity=pi,
+        mean_ld=ld,
+        left_bins=LEFT_BINS,
+        right_bins=RIGHT_BINS,
+        recombination_rate=RECOMBINATION_RATE,
+        mutation_rate=MUTATION_RATE,
+        num_samples=20,
+        sequence_length=SEQUENCE_LENGTH,
+    )
+    idata = m.sample(draws=20, tune=20, chains=1, simplify=False)
+    post = idata.posterior
+    assert "beta_ld" in post
+    assert "t_boundaries" in post
 
 
 @pytest.mark.slow

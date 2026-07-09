@@ -17,6 +17,7 @@ __all__ = [
     "PiecewiseExponential",
     "RandomWalk",
     "CustomEngine",
+    "plot_demography",
 ]
 
 
@@ -113,3 +114,4 @@ from .piecewise_constant import PiecewiseConstant  # noqa: E402
 from .piecewise_exponential import PiecewiseExponential  # noqa: E402
 from .random_walk import RandomWalk  # noqa: E402
 from .custom import CustomEngine  # noqa: E402
+from ._plotting import plot_demography  # noqa: E402

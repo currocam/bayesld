@@ -326,9 +326,11 @@ def data_from_vcf(
 
 
 from . import montecarlo
+from .inference import sim_sufficient_stats
 
 __doc__ = _bayesld.__doc__
 if hasattr(_bayesld, "__all__"):
-    __all__ = _bayesld.__all__
+    __all__ = list(_bayesld.__all__)
 else:
     __all__ = []
+__all__ += ["sim_sufficient_stats"]

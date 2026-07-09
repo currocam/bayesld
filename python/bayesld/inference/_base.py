@@ -3,7 +3,9 @@ Shared machinery for inference engine.
 """
 
 import abc
+import contextlib
 import copy
+import logging
 import pathlib
 import time
 from typing import TYPE_CHECKING
@@ -23,6 +25,45 @@ _THREADS_OPTS = {"cpp_options": {"STAN_THREADS": "true"}}
 #: resolves for both built-in and custom engines.
 _STAN_DIR = pathlib.Path(__file__).resolve().parent / "stan"
 
+# TODO: this looks like a hack, fix before release
+@contextlib.contextmanager
+def _quiet_cmdstanpy(verbose: bool):
+    """Silence cmdstanpy's INFO logger when ``verbose`` is false."""
+    if verbose:
+        yield
+        return
+    import cmdstanpy
+
+    logger = cmdstanpy.utils.get_logger()
+    old = logger.level
+    logger.setLevel(logging.ERROR)
+    try:
+        yield
+    finally:
+        logger.setLevel(old)
+
+# TODO: Not an elegant solution, fix before release
+class _DatasetVarAdapter:
+    """Expose ``.stan_variable(name)`` over an ``arviz.extract``-style dataset.
+
+    Lets the engines' ``_extract_params`` (written against a cmdstanpy fit) be
+    reused to turn posterior draws back into per-draw parameter dicts. Each call
+    returns the variable with the ``sample`` dim leading, matching the
+    ``(n_draws, *param_shape)`` layout of ``CmdStanMCMC.stan_variable``.
+    """
+
+    def __init__(self, ds: "xr.Dataset") -> None:
+        self._ds = ds
+
+    def has_variable(self, name: str) -> bool:
+        return name in self._ds
+
+    def stan_variable(self, name: str) -> np.ndarray:
+        da = self._ds[name]
+        other = [d for d in da.dims if d != "sample"]
+        return np.asarray(da.transpose("sample", *other).values)
+
+
 _DEFAULT_N_QUAD = 8
 _DEFAULT_HYPERPRIOR = {
     "hsgp_c": 1.5,
@@ -31,6 +72,69 @@ _DEFAULT_HYPERPRIOR = {
     "lkj_eta": 2.0,
     "log_sigma_y_scale": 1.0,
 }
+
+# I think the output of the inference should be (by default) easy to follow. 
+# So we exclude the GP-surrogate internals variables from the output.
+_SURROGATE_POSTERIOR_VARS = frozenset(
+    {
+        "gp_rho",
+        "gp_alpha",
+        "beta_ld",
+        "log_sigma_y",
+        "L_Omega",
+        "Omega",
+        "spd_ld",
+        "w_ld",
+        "PHI_ld_pred",
+        "log_ld_pred_std",
+        "approx_expected_ld",
+        "mu_y",
+        "sigma_y",
+        "L_Sigma",
+    }
+)
+
+_POSTERIOR_COORDS = frozenset({"chain", "draw", "epoch", "boundary", "step", "bin"})
+
+# TODO: This is not elegant and untested, we should fix this before release
+def _clean_posterior_var(da: "xr.DataArray", coords: dict) -> "xr.DataArray":
+    """Keep only user-facing posterior coordinates on a variable."""
+    import xarray as xr
+
+    new_coords = {}
+    for dim in da.dims:
+        if dim in ("chain", "draw") and dim in da.coords:
+            new_coords[dim] = da.coords[dim].values
+        elif dim in coords:
+            new_coords[dim] = coords[dim]
+    return xr.DataArray(
+        da.values, dims=da.dims, coords=new_coords, attrs=da.attrs, name=da.name
+    )
+
+
+def _simplify_posterior_dataset(ds: "xr.Dataset", *, coords: dict) -> "xr.Dataset":
+    """Drop surrogate internals from a posterior dataset."""
+    import xarray as xr
+
+    out: dict[str, xr.DataArray] = {}
+    for name, da in ds.data_vars.items():
+        if name in _SURROGATE_POSTERIOR_VARS:
+            continue
+        out[name] = _clean_posterior_var(da, coords)
+    return xr.Dataset(out)
+
+
+def _as_posterior_dataset(posterior) -> "xr.Dataset":
+    """Coerce a posterior group (``Dataset`` or ``DataTree``) to ``Dataset``."""
+    import xarray as xr
+
+    if isinstance(posterior, xr.Dataset):
+        return posterior
+    if isinstance(posterior, xr.DataTree):
+        return posterior.to_dataset()
+    raise TypeError(
+        f"posterior must be an xarray.Dataset or xarray.DataTree; got {type(posterior).__name__}."
+    )
 
 
 class _BaseEngine(abc.ABC):
@@ -131,7 +235,7 @@ class _BaseEngine(abc.ABC):
         Returns:
         - a new model with the data attached (the receiver is left unchanged). If
           no prior has been set, an empirical-Bayes default (``_default_prior``) is
-          installed.
+          used.
         """
         new = self._clone()
         new._left_bins = np.asarray(left_bins, dtype=float)
@@ -179,16 +283,23 @@ class _BaseEngine(abc.ABC):
         new._sigma_points = [sigma_pt for _, sigma_pt in points]
         return new
 
-    # ─── Read-only accessors ─────────────────────────────────────────────────
-
+    # If user wants to inspect the Stan code, they can do so here.
     @property
     def stan_code(self) -> str:
         return self._stan_code
 
+    # I'm not sure if needed, but I guess there's no harm in also exposing
+    # the augmented data points.
+
+    # Bias refers to data used to learn the LD bias
     @property
     def bias_points(self) -> list[dict]:
         return list(self._bias_points)
 
+    # Sigma-points refer to data used to learn the joint-covariance matrix. 
+    # Both are different to obtain more robust estimates, as initial active 
+    # learning rounds can be different from the final rounds (which we 
+    # hope are closer to the true parameters).
     @property
     def sigma_points(self) -> list[dict]:
         return list(self._sigma_points)
@@ -243,18 +354,13 @@ class _BaseEngine(abc.ABC):
         )
         return data
 
-    # ─── Posterior labelling ─────────────────────────────────────────────────
+    # We return a Arviz compatible dataset, for which we need some bookkeeping.
 
     def _dims(self) -> dict:
         return {**self._SHARED_DIMS, **self._PARAM_DIMS}
 
     def _coords(self) -> dict:
-        """Coordinate values for the named dims.
-
-        ``bin`` is labelled by genetic-distance midpoint (Morgans); ``window`` is
-        a plain integer range; parameterization-specific coords come from the
-        subclass via ``_param_coords``.
-        """
+    # For labels only, we use the midpoint of the bins.
         mid = np.round((self._left_bins + self._right_bins) / 2.0, 5)
         coords = {
             "bin": mid,
@@ -262,6 +368,25 @@ class _BaseEngine(abc.ABC):
         }
         coords.update(self._param_coords())
         return coords
+
+    # TODO: this function seems unnecessary, fix before release
+    def _simplify_posterior(self, posterior) -> "xr.Dataset":
+        """Return a user-facing posterior with surrogate internals removed."""
+        return _simplify_posterior_dataset(
+            _as_posterior_dataset(posterior), coords=self._coords()
+        )
+
+    # TODO: this function is not elegant, fix before release
+    def _read_transition_times(self, fit, n_epochs: int) -> np.ndarray:
+        """Read epoch boundary times from a fit or posterior dataset."""
+        ne = np.atleast_2d(np.asarray(fit.stan_variable("Ne_values")))
+        n_draws = ne.shape[0]
+        n_trans = n_epochs - 1
+        if n_trans == 0:
+            return np.empty((n_draws, 0))
+        return np.atleast_2d(np.asarray(fit.stan_variable("t_boundaries"))).reshape(
+            n_draws, n_trans
+        )
 
     # ─── Sampling ────────────────────────────────────────────────────────────
 
@@ -274,8 +399,9 @@ class _BaseEngine(abc.ABC):
         seed: int | None = None,
         num_workers: int = 1,
         verbose: bool = False,
+        simplify: bool = True,
         **kwargs,
-    ):
+    ) -> "xr.DataTree":
         """Sample from the posterior using NUTS.
 
         Arguments:
@@ -285,14 +411,16 @@ class _BaseEngine(abc.ABC):
         - seed: random seed
         - num_workers: number of workers
         - verbose: whether to print progress
+        - simplify: Pass ``simplify=False`` for the full Stan output.
         - kwargs: additional arguments for cmdstanpy.CmdStanModel.sample
 
         Returns:
-        - xr.DataTree: the posterior samples
+        - xarray.DataTree: posterior, log-likelihood, posterior predictive, and
+          observed-data groups (ArviZ-compatible layout).
         """
         if self._data is None:
             raise RuntimeError("Call `.with_data(...)` before sampling.")
-        import arviz
+        import arviz as az
         import xarray as xr
 
         if verbose:
@@ -303,38 +431,108 @@ class _BaseEngine(abc.ABC):
         start = time.perf_counter()
         kwargs.setdefault("show_console", bool(verbose))
         kwargs.setdefault("threads_per_chain", int(num_workers))
-        fit = self._model.sample(
-            data=self._stan_data(),
-            chains=chains,
-            iter_sampling=draws,
-            iter_warmup=tune,
-            seed=seed,
-            **kwargs,
-        )
+        kwargs.setdefault("parallel_chains", int(chains))
+        # Initializing the chains from a Pathfinder fit
+        # helps getting reasonable values for the GP and the covariance matrix.
+        if "inits" not in kwargs:
+            pf_seed = int(np.random.default_rng(seed).integers(2**31))
+            if verbose:
+                print("[bayesld] Pathfinder warm-start for chain initialization")
+            pf = self._pathfinder(
+                draws=max(int(draws), int(chains)),
+                seed=pf_seed,
+                num_workers=num_workers,
+                verbose=verbose,
+                psis_resample=True,
+            )
+            kwargs["inits"] = pf.create_inits(chains=int(chains), seed=seed)
+        with _quiet_cmdstanpy(verbose):
+            fit = self._model.sample(
+                data=self._stan_data(),
+                chains=chains,
+                iter_sampling=draws,
+                iter_warmup=tune,
+                seed=seed,
+                **kwargs,
+            )
         if verbose:
             print(f"[bayesld] sampling finished in {time.perf_counter() - start:.1f}s")
-        idata = arviz.from_cmdstanpy(fit, coords=self._coords(), dims=self._dims())
+        idata: xr.DataTree = az.from_cmdstanpy(
+            fit, coords=self._coords(), dims=self._dims()
+        )
         ll = self.pointwise_log_lik(idata)
         idata["log_likelihood"] = xr.Dataset({"log_lik": ll})
+        idata["posterior_predictive"] = self.posterior_predictive(idata, seed=seed)
+        idata["observed_data"] = self._observed_data()
+        idata["constant_data"] = self._constant_data()
+        if simplify:
+            # TODO: we could wrap the simplification logic here
+            idata["posterior"] = self._simplify_posterior(idata.posterior)
         return idata
 
+    # Arviz distinguishes between constant, observed and posterior predictive data. 
+    # So we make sure to include all of them in the output.
+    def _observed_data(self) -> "xr.Dataset":
+        import xarray as xr
+
+        c = self._coords()
+        observed_pi = xr.DataArray(
+            np.asarray(self._data["mean_diversity"], dtype=float),
+            dims=["window"],
+            coords={"window": c["window"]},
+        )
+        observed_ld = xr.DataArray(
+            np.asarray(self._data["mean_ld"], dtype=float),
+            dims=["window", "bin"],
+            coords={"window": c["window"], "bin": c["bin"]},
+        )
+        return xr.Dataset(
+            {
+                "observed_pi": observed_pi,
+                "observed_ld": observed_ld,
+                "mean_pi": observed_pi.mean(dim="window"),
+                "mean_ld": observed_ld.mean(dim="window"),
+            }
+        )
+
+    # TODO: For now, only RandomWalk has constant data variables yet
+    # we define a generic dummy function here
+    def _constant_data_vars(self) -> dict:
+        """Parameterization-specific entries for ``constant_data``."""
+        return {}
+
+    # All models shared the same input data with the same geometry.
+    def _constant_data(self) -> "xr.Dataset":
+        import xarray as xr
+
+        c = self._coords()
+        bin_coord = c["bin"]
+        data_vars = {
+            "left": xr.DataArray(
+                np.asarray(self._left_bins, dtype=float),
+                dims=["bin"],
+                coords={"bin": bin_coord},
+            ),
+            "right": xr.DataArray(
+                np.asarray(self._right_bins, dtype=float),
+                dims=["bin"],
+                coords={"bin": bin_coord},
+            ),
+            "midpoint": xr.DataArray(
+                np.asarray(bin_coord, dtype=float),
+                dims=["bin"],
+                coords={"bin": bin_coord},
+            ),
+        }
+        data_vars.update(self._constant_data_vars())
+        return xr.Dataset(data_vars)
+
+    # TODO: this function should be internal, no need to expose it to the user.
+    # as it needs full posterior and we compute it after sampling any way. 
+    # Fix before release
     def pointwise_log_lik(self, idata: "xr.DataTree") -> "xr.DataArray":
-        """Per-window log-likelihood from a posterior InferenceData.
-        TODO: check this
-
-        Arguments:
-        - idata: the posterior xr.DataTree to compute the log-likelihood from
-
-        Returns:
-        - xr.DataArray: the log-likelihood with dimensions (chain, draw, window)
-        Example:
-        ```
-            import xarray as xr
-            ll = model.pointwise_log_lik(idata)
-            idata["log_likelihood"] = xr.Dataset({"log_lik":ll})
-            az.loo(idata)
-        """
         if self._data is None:
+            # TODO; after interval, this should be unreachable, fix before release
             raise RuntimeError("No data attached. Call `.with_data(...)` first.")
         import xarray as xr
 
@@ -348,6 +546,7 @@ class _BaseEngine(abc.ABC):
             ],
             axis=-1,
         )
+        # TODO: check this math
         # L_Sigma = diag(sigma_y) @ L_Omega; solve via two steps to avoid
         # materialising L_Sigma and to exploit the known triangular structure.
         sigma_y = np.exp(post["log_sigma_y"].values)  # (chain, draw, D)
@@ -382,20 +581,85 @@ class _BaseEngine(abc.ABC):
             },
         )
 
-    def _pathfinder(
-        self, draws: int, seed: int, num_workers: int, verbose: bool = False
-    ):
-        return self._model.pathfinder(
-            data=self._stan_data(),
-            draws=int(draws),
-            seed=int(seed),
-            inits=0.5,
-            num_threads=int(num_workers),
-            show_console=bool(verbose),
-            psis_resample=False,
+    # TODO: this function should be internal, no need to expose it to the user.
+    def posterior_predictive(
+        self, idata: "xr.DataTree", seed: int | None = None
+    ) -> "xr.Dataset":
+        # TODO: after interval, this should be unreachable, fix before release
+        if self._data is None:
+            raise RuntimeError("No data attached. Call `.with_data(...)` first.")
+        import xarray as xr
+
+        post = idata.posterior
+
+        # mu_y: (chain, draw, D)
+        mu_y = np.concatenate(
+            [
+                post["expected_pi"].values[..., np.newaxis],
+                post["corrected_expected_ld"].values,
+            ],
+            axis=-1,
+        )
+        sigma_y = np.exp(post["log_sigma_y"].values)  # (chain, draw, D)
+        L_Omega = post["L_Omega"].values  # (chain, draw, D, D)
+
+        n_chain, n_draw, D = mu_y.shape
+        n_windows = len(self._data["mean_diversity"])
+
+        # TODO; check this math
+        # y = mu_y + L_Sigma z,  L_Sigma = diag(sigma_y) L_Omega,  z ~ N(0, I).
+        rng = np.random.default_rng(seed)
+        z = rng.standard_normal((n_chain, n_draw, n_windows, D))
+        v = np.einsum("cdij,cdwj->cdwi", L_Omega, z)  # (chain, draw, window, D)
+        y = mu_y[:, :, np.newaxis, :] + sigma_y[:, :, np.newaxis, :] * v
+
+        c = self._coords()
+        chain = post.coords["chain"].values
+        draw = post.coords["draw"].values
+        observed_pi = xr.DataArray(
+            y[..., 0],
+            dims=["chain", "draw", "window"],
+            coords={"chain": chain, "draw": draw, "window": c["window"]},
+        )
+        observed_ld = xr.DataArray(
+            y[..., 1:],
+            dims=["chain", "draw", "window", "bin"],
+            coords={
+                "chain": chain,
+                "draw": draw,
+                "window": c["window"],
+                "bin": c["bin"],
+            },
+        )
+        return xr.Dataset(
+            {
+                "observed_pi": observed_pi,
+                "observed_ld": observed_ld,
+                "mean_pi": observed_pi.mean(dim=["window"]),
+                "mean_ld": observed_ld.mean(dim=["window"]),
+            }
         )
 
-    # ─── Active learning ─────────────────────────────────────────────────────
+    def _pathfinder(
+        self,
+        draws: int,
+        seed: int,
+        num_workers: int,
+        verbose: bool = False,
+        psis_resample: bool = False,
+    ):
+        with _quiet_cmdstanpy(verbose):
+            return self._model.pathfinder(
+                data=self._stan_data(),
+                draws=int(draws),
+                seed=int(seed),
+                inits=0.5,
+                num_threads=int(num_workers),
+                show_console=bool(verbose),
+                # We don't use resampling because it caused
+                # degenerate proposed points in active learning rounds.
+                psis_resample=bool(psis_resample),
+            )
 
     def active_learning_round(
         self,
@@ -527,8 +791,77 @@ class _BaseEngine(abc.ABC):
             ld = np.concatenate([ld, ld2])
         return np.asarray(pi), np.asarray(ld)
 
-    # ─── Notebook display ────────────────────────────────────────────────────
+    # The posterior predictive we offer rely on our surrogate likelihood to be accurate.
+    # For this reason, it is still important to be able to convert the posterior to a msprime demography.
+    # and simulate actual datasets. 
+    # TODO; Low priority, but this should be tested before release
+    @staticmethod
+    def _to_sample_dataset(posterior) -> "xr.Dataset":
+        """Coerce a posterior into a ``Dataset`` with a single ``sample`` dim."""
+        import xarray as xr
 
+        ds = posterior
+        if not isinstance(ds, xr.Dataset):
+            post = getattr(ds, "posterior", ds)
+            if isinstance(post, xr.DataTree):
+                ds = post.to_dataset()
+            elif isinstance(post, xr.Dataset):
+                ds = post
+            else:
+                raise TypeError(
+                    "posterior must be an xarray.Dataset (e.g. from arviz.extract), "
+                    "an xarray.DataTree (e.g. from sample), or an object with a "
+                    f"``posterior`` group; got {type(posterior).__name__}."
+                )
+        if "sample" not in ds.dims:
+            if "chain" in ds.dims and "draw" in ds.dims:
+                ds = ds.stack(sample=("chain", "draw"))
+            else:
+                raise ValueError(
+                    "posterior must have a 'sample' dim (e.g. from arviz.extract) or "
+                    "both 'chain' and 'draw' dims."
+                )
+        return ds
+
+    def to_msprime_demography(self, posterior) -> list:
+        """Build one ``msprime.Demography`` per posterior draw.
+
+        Turns inferred demographic parameters back into msprime objects (e.g. to
+        re-simulate under the posterior). The demographic variables are read by
+        name from the draws, so the same parameterization that produced the
+        posterior must be used.
+
+        Arguments:
+        - posterior: demographic draws. Accepts the output of ``arviz.extract(idata)``
+          (an ``xarray.Dataset`` with a ``sample`` dim), a raw posterior
+          ``Dataset``/``DataTree`` carrying ``chain``/``draw`` dims, or an
+          :class:`xarray.DataTree` returned by :meth:`sample` (its ``posterior``
+          group is used).
+
+        Returns:
+        - list[msprime.Demography]: one single-population demography per draw,
+          in draw order.
+
+        Example:
+        ```
+        import arviz as az
+        idata = model.sample()
+        demographies = model.to_msprime_demography(az.extract(idata))
+        demographies[0]  # single draw
+        ```
+        """
+        ds = self._to_sample_dataset(posterior)
+        fit = _DatasetVarAdapter(ds)
+        return [self._build_demography(p) for p in self._extract_params(fit)]
+
+    def plot_demography(self, posterior, ax=None, *, color="#4c72b0"):
+        """Plot ``N_e(t)`` for all posterior draws; returns the axes."""
+        from . import _plotting as pg
+
+        return pg.plot_demography(self.to_msprime_demography(posterior), ax=ax, color=color)
+
+    # For interactive notebooks, we provide a nice summary of the model.
+    # TODO: this should be in a separate module, low priority. 
     @property
     def _title(self) -> str:
         """Heading shown in the repr/HTML summary; subclasses may override."""
@@ -621,7 +954,7 @@ class _BaseEngine(abc.ABC):
             )
             open_attr = " open" if open_by_default else ""
             return (
-                "<tr><td colspan='2' style='padding:4px 0;'>"
+                "<tr><td colspan='2' style='padding:4px 0;text-align:left;vertical-align:top;'>"
                 f"<details{open_attr}>"
                 f"<summary style='cursor:pointer;font-weight:600;'>{title}</summary>"
                 "<table style='border-collapse:collapse;margin-top:4px;'>"
@@ -638,7 +971,7 @@ class _BaseEngine(abc.ABC):
                 open_by_default=self._prior is None,
             )
             + _section(
-                "Empirical data",
+                "Empirical dataset",
                 data_rows,
                 open_by_default=self._data is None,
             )
@@ -654,14 +987,15 @@ class _BaseEngine(abc.ABC):
             )
         )
         return (
-            '<div><table style="border-collapse:collapse;">'
+            '<div style="max-width:100%;overflow-x:auto;">'
+            '<table style="border-collapse:collapse;width:100%;table-layout:fixed;">'
             "<thead><tr>"
             '<th style="padding:2px 8px;text-align:left;" colspan="2">'
             f"{self._title}</th></tr></thead>"
             f"<tbody>{cells}</tbody></table></div>"
         )
 
-    # ─── Abstract seams (per parameterization) ───────────────────────────────
+    # NOTE: I'm not sure the ABC was a good idea, but it's here for now.
 
     @abc.abstractmethod
     def with_prior(self, *args, **kwargs) -> "_BaseEngine":

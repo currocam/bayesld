@@ -191,14 +191,14 @@ class PiecewiseConstant(_BaseEngine):
         - seed: random seed
 
         Returns:
-        - xr.DataTree: the prior samples
+        - xarray.DataTree: the prior samples
         """
         if self._prior is None:
             raise RuntimeError(
                 "No prior set. Call `.with_prior(...)` to set one explicitly, or "
                 "`.with_data(...)` to use a default empirical-Bayes prior."
             )
-        import arviz
+        import arviz as az
 
         rng = np.random.default_rng(seed)
         total = draws * chains
@@ -247,7 +247,7 @@ class PiecewiseConstant(_BaseEngine):
             dims["log_t"] = ["boundary"]
             dims["t_boundaries"] = ["boundary"]
 
-        return arviz.from_dict({"posterior": posterior}, coords=coords, dims=dims)
+        return az.from_dict({"posterior": posterior}, coords=coords, dims=dims)
 
     def _param_coords(self) -> dict:
         return {
@@ -259,13 +259,7 @@ class PiecewiseConstant(_BaseEngine):
         ne_draws = np.atleast_2d(np.asarray(fit.stan_variable("Ne_values"))).reshape(
             -1, self.num_epochs
         )
-        if self.num_epochs > 1:
-            t_draws = np.atleast_2d(
-                np.asarray(fit.stan_variable("t_boundaries"))
-            ).reshape(-1, self.num_epochs - 1)
-        else:
-            # Single constant epoch: no boundaries to propose.
-            t_draws = np.empty((len(ne_draws), 0))
+        t_draws = self._read_transition_times(fit, self.num_epochs)
         return [{"ne": ne_draws[i], "t": t_draws[i]} for i in range(len(ne_draws))]
 
     def _expected(self, params: dict) -> tuple[float, np.ndarray]:

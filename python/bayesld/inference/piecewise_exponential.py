@@ -166,14 +166,14 @@ class PiecewiseExponential(_BaseEngine):
         - seed: random seed
 
         Returns:
-        - xr.DataTree: the prior samples
+        - xarray.DataTree: the prior samples
         """
         if self._prior is None:
             raise RuntimeError(
                 "No prior set. Call `.with_prior(...)` to set one explicitly, or "
                 "`.with_data(...)` to use a default empirical-Bayes prior."
             )
-        import arviz
+        import arviz as az
 
         rng = np.random.default_rng(seed)
         p = self._prior
@@ -198,7 +198,7 @@ class PiecewiseExponential(_BaseEngine):
             "t0": t0,
             "alpha": log_alpha_fold / t0,
         }
-        return arviz.from_dict({"posterior": posterior})
+        return az.from_dict({"posterior": posterior})
 
     def _param_coords(self) -> dict:
         return {}

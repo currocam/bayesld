@@ -207,14 +207,14 @@ class RandomWalk(_BaseEngine):
         - seed: random seed
 
         Returns:
-        - xr.DataTree: the prior samples
+        - xarray.DataTree: the prior samples
         """
         if self._prior is None:
             raise RuntimeError(
                 "No prior set. Call `.with_prior(...)` to set one explicitly, or "
                 "`.with_data(...)` to use a default empirical-Bayes prior."
             )
-        import arviz
+        import arviz as az
 
         rng = np.random.default_rng(seed)
         p = self._prior
@@ -251,7 +251,7 @@ class RandomWalk(_BaseEngine):
             "steps": ["step"],
             "t_boundaries": ["boundary"],
         }
-        return arviz.from_dict(
+        return az.from_dict(
             {"posterior": posterior}, coords=self._param_coords(), dims=dims
         )
 
@@ -260,6 +260,18 @@ class RandomWalk(_BaseEngine):
             "epoch": np.arange(self.num_epochs),
             "step": np.arange(self.num_epochs - 1),
             "boundary": np.arange(self.num_epochs - 1),
+        }
+
+    def _constant_data_vars(self) -> dict:
+        import xarray as xr
+
+        c = self._param_coords()
+        return {
+            "grid": xr.DataArray(
+                np.asarray(self._grid, dtype=float),
+                dims=["boundary"],
+                coords={"boundary": c["boundary"]},
+            ),
         }
 
     # ─── MC / demography seam ────────────────────────────────────────────────
