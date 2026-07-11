@@ -38,7 +38,6 @@ expectation used for Monte-Carlo active learning.
 import pathlib
 
 import numpy as np
-import numpy.typing as npt
 
 from ._base import _DEFAULT_N_QUAD, _BaseEngine
 
@@ -137,6 +136,7 @@ class PiecewiseExponential(_BaseEngine):
 
     def _default_prior(self) -> dict:
         """Empirical-Bayes prior: Ne_a centred on the Watterson estimate pi/(4·mu)."""
+        assert self._data is not None
         pi = self._data["mean_diversity"]
         mu = self._data["mutation_rate"]
         log_ne_mu = float(np.log(np.mean(pi) / (4.0 * mu)))
@@ -150,6 +150,7 @@ class PiecewiseExponential(_BaseEngine):
         }
 
     def _prior_stan_data(self) -> dict:
+        assert self._prior is not None
         return dict(self._prior)
 
     def sample_prior(
@@ -219,6 +220,7 @@ class PiecewiseExponential(_BaseEngine):
     def _expected(self, params: dict) -> tuple[float, np.ndarray]:
         from .. import deterministic as det
 
+        assert self._data is not None
         det_pi, det_ld = det.expected_piecewise_exponential(
             params["ne_c"],
             params["ne_a"],

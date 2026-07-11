@@ -106,7 +106,7 @@ class CustomEngine(_BaseEngine):
         """
         self._STAN_FILE = pathlib.Path(stan_file)
         self._PARAM_DIMS = dict(param_dims or {})
-        self._seams = {
+        self._seams: dict[str, Callable | None] = {
             "default_prior": default_prior,
             "prior_stan_data": prior_stan_data,
             "param_coords": param_coords,
@@ -150,6 +150,7 @@ class CustomEngine(_BaseEngine):
         return dict(fn(self))
 
     def _prior_stan_data(self) -> dict:
+        assert self._prior is not None
         fn = self._seams.get("prior_stan_data")
         return dict(fn(self)) if fn is not None else dict(self._prior)
 

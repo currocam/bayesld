@@ -1,11 +1,4 @@
-// ---- transformed_parameters.stan ----
-// Shared tail of the transformed parameters block. The demography-specific part
-// (included *above* this) must have already defined:
-//   real         expected_pi;
-//   vector[n_bins] approx_expected_ld;   // finite-sample corrected
-// This applies the per-bin HSGP LD-bias correction and assembles the joint mean
-// mu_y = [expected_pi, corrected_expected_ld] and Cholesky L_Sigma.
-
+// Shared transformed parameters
 vector[hsgp_m_ld] spd_ld = diagSPD_EQ(gp_alpha, gp_rho, L_ld, hsgp_m_ld);
 matrix[hsgp_m_ld, n_bins] w_ld = diag_pre_multiply(spd_ld, beta_ld);
 

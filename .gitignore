@@ -73,3 +73,16 @@ docs/_build/
 
 # Pyenv
 .python-version
+
+# Compiled cmdstan models (built in-place next to the .stan source)
+/python/bayesld/inference/stan/piecewise_constant
+/python/bayesld/inference/stan/piecewise_exponential
+/python/bayesld/inference/stan/random_walk
+# cmdstan build artifacts
+*.hpp
+python/bayesld/inference/stan/**/*.o
+
+# Generated outputs
+*.nc
+.ipynb_checkpoints/
+examples_old/

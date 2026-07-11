@@ -8,10 +8,11 @@ import copy
 import logging
 import pathlib
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Self
 
 import numpy as np
 import numpy.typing as npt
+from numpy.typing import NDArray
 
 from . import _surrogate as sg
 
@@ -25,7 +26,8 @@ _THREADS_OPTS = {"cpp_options": {"STAN_THREADS": "true"}}
 #: resolves for both built-in and custom engines.
 _STAN_DIR = pathlib.Path(__file__).resolve().parent / "stan"
 
-# TODO: this looks like a hack, fix before release
+
+# It's a hack but seems to work???
 @contextlib.contextmanager
 def _quiet_cmdstanpy(verbose: bool):
     """Silence cmdstanpy's INFO logger when ``verbose`` is false."""
@@ -42,7 +44,7 @@ def _quiet_cmdstanpy(verbose: bool):
     finally:
         logger.setLevel(old)
 
-# TODO: Not an elegant solution, fix before release
+
 class _DatasetVarAdapter:
     """Expose ``.stan_variable(name)`` over an ``arviz.extract``-style dataset.
 
@@ -73,7 +75,7 @@ _DEFAULT_HYPERPRIOR = {
     "log_sigma_y_scale": 1.0,
 }
 
-# I think the output of the inference should be (by default) easy to follow. 
+# I think the output of the inference should be (by default) easy to follow.
 # So we exclude the GP-surrogate internals variables from the output.
 _SURROGATE_POSTERIOR_VARS = frozenset(
     {
@@ -96,17 +98,18 @@ _SURROGATE_POSTERIOR_VARS = frozenset(
 
 _POSTERIOR_COORDS = frozenset({"chain", "draw", "epoch", "boundary", "step", "bin"})
 
-# TODO: This is not elegant and untested, we should fix this before release
+
 def _clean_posterior_var(da: "xr.DataArray", coords: dict) -> "xr.DataArray":
     """Keep only user-facing posterior coordinates on a variable."""
     import xarray as xr
 
     new_coords = {}
     for dim in da.dims:
+        key = str(dim)
         if dim in ("chain", "draw") and dim in da.coords:
-            new_coords[dim] = da.coords[dim].values
-        elif dim in coords:
-            new_coords[dim] = coords[dim]
+            new_coords[key] = da.coords[dim].values
+        elif key in coords:
+            new_coords[key] = coords[key]
     return xr.DataArray(
         da.values, dims=da.dims, coords=new_coords, attrs=da.attrs, name=da.name
     )
@@ -120,7 +123,7 @@ def _simplify_posterior_dataset(ds: "xr.Dataset", *, coords: dict) -> "xr.Datase
     for name, da in ds.data_vars.items():
         if name in _SURROGATE_POSTERIOR_VARS:
             continue
-        out[name] = _clean_posterior_var(da, coords)
+        out[str(name)] = _clean_posterior_var(da, coords)
     return xr.Dataset(out)
 
 
@@ -164,10 +167,10 @@ class _BaseEngine(abc.ABC):
         self._hyperprior = dict(_DEFAULT_HYPERPRIOR)
         self._hyperprior.update(hyperprior)
 
-        self._left_bins = None
-        self._right_bins = None
-        self._data = None
-        self._prior = None
+        self._left_bins: NDArray | None = None
+        self._right_bins: NDArray | None = None
+        self._data: dict[str, Any] | None = None
+        self._prior: dict[str, Any] | None = None
         self._bias_points: list[dict] = []
         self._sigma_points: list[dict] = []
 
@@ -184,12 +187,12 @@ class _BaseEngine(abc.ABC):
         self._model = cmdstanpy.CmdStanModel(
             stan_file=str(self._STAN_FILE),
             stanc_options={"include-paths": include_paths},
-            **_THREADS_OPTS,
+            cpp_options=_THREADS_OPTS["cpp_options"],
         )
 
     # ─── Immutable builder plumbing ──────────────────────────────────────────
 
-    def _clone(self) -> "_BaseEngine":
+    def _clone(self) -> Self:
         """Shallow copy sharing the compiled Stan model and read-only arrays.
 
         Container objects (_bias_points, _sigma_points, _prior, _data,
@@ -255,8 +258,20 @@ class _BaseEngine(abc.ABC):
 
     def with_hyperprior(self, **kwargs: float) -> "_BaseEngine":
         """
-        Set the hyperpriors for the model.
-        TODO: add documentation for the hyperpriors.
+        Set the hyperpriors for the GP-surrogate and observation model.
+
+        Keyword arguments (all floats):
+        - hsgp_c: boundary factor for the Hilbert-space GP approximation (default 1.5).
+          Larger values widen the effective domain of the GP along the log-LD axis.
+        - hsgp_m_ld: number of HSGP basis functions per LD bin (default 6).
+          More functions increase expressivity but slow sampling.
+        - gp_alpha_std: prior std on the GP amplitude ``gp_alpha`` (default 0.005).
+          Small values keep the LD-bias correction conservative.
+        - lkj_eta: LKJ concentration for the correlation matrix ``Omega`` (default 2.0).
+          Values > 1 shrink off-diagonal entries toward zero.
+        - log_sigma_y_scale: scale of the half-normal prior on each ``log_sigma_y``
+          entry (default 1.0). Controls how far observation-noise scales can deviate
+          from the data-driven location.
 
         Returns:
         - a new model with the hyperpriors updated (the receiver is left unchanged)
@@ -296,9 +311,9 @@ class _BaseEngine(abc.ABC):
     def bias_points(self) -> list[dict]:
         return list(self._bias_points)
 
-    # Sigma-points refer to data used to learn the joint-covariance matrix. 
-    # Both are different to obtain more robust estimates, as initial active 
-    # learning rounds can be different from the final rounds (which we 
+    # Sigma-points refer to data used to learn the joint-covariance matrix.
+    # Both are different to obtain more robust estimates, as initial active
+    # learning rounds can be different from the final rounds (which we
     # hope are closer to the true parameters).
     @property
     def sigma_points(self) -> list[dict]:
@@ -313,6 +328,7 @@ class _BaseEngine(abc.ABC):
                 "or sampling."
             )
         assert self._prior is not None  # with_data always sets it
+        assert self._left_bins is not None and self._right_bins is not None
 
         div = self._data["mean_diversity"]
         ld = self._data["mean_ld"]
@@ -360,7 +376,9 @@ class _BaseEngine(abc.ABC):
         return {**self._SHARED_DIMS, **self._PARAM_DIMS}
 
     def _coords(self) -> dict:
-    # For labels only, we use the midpoint of the bins.
+        # For labels only, we use the midpoint of the bins.
+        assert self._left_bins is not None and self._right_bins is not None
+        assert self._data is not None
         mid = np.round((self._left_bins + self._right_bins) / 2.0, 5)
         coords = {
             "bin": mid,
@@ -369,14 +387,6 @@ class _BaseEngine(abc.ABC):
         coords.update(self._param_coords())
         return coords
 
-    # TODO: this function seems unnecessary, fix before release
-    def _simplify_posterior(self, posterior) -> "xr.Dataset":
-        """Return a user-facing posterior with surrogate internals removed."""
-        return _simplify_posterior_dataset(
-            _as_posterior_dataset(posterior), coords=self._coords()
-        )
-
-    # TODO: this function is not elegant, fix before release
     def _read_transition_times(self, fit, n_epochs: int) -> np.ndarray:
         """Read epoch boundary times from a fit or posterior dataset."""
         ne = np.atleast_2d(np.asarray(fit.stan_variable("Ne_values")))
@@ -460,21 +470,23 @@ class _BaseEngine(abc.ABC):
         idata: xr.DataTree = az.from_cmdstanpy(
             fit, coords=self._coords(), dims=self._dims()
         )
-        ll = self.pointwise_log_lik(idata)
+        ll = self._pointwise_log_lik(idata)
         idata["log_likelihood"] = xr.Dataset({"log_lik": ll})
-        idata["posterior_predictive"] = self.posterior_predictive(idata, seed=seed)
+        idata["posterior_predictive"] = self._posterior_predictive(idata, seed=seed)
         idata["observed_data"] = self._observed_data()
         idata["constant_data"] = self._constant_data()
         if simplify:
-            # TODO: we could wrap the simplification logic here
-            idata["posterior"] = self._simplify_posterior(idata.posterior)
+            idata["posterior"] = _simplify_posterior_dataset(
+                _as_posterior_dataset(idata.posterior), coords=self._coords()
+            )
         return idata
 
-    # Arviz distinguishes between constant, observed and posterior predictive data. 
+    # Arviz distinguishes between constant, observed and posterior predictive data.
     # So we make sure to include all of them in the output.
     def _observed_data(self) -> "xr.Dataset":
         import xarray as xr
 
+        assert self._data is not None
         c = self._coords()
         observed_pi = xr.DataArray(
             np.asarray(self._data["mean_diversity"], dtype=float),
@@ -495,8 +507,6 @@ class _BaseEngine(abc.ABC):
             }
         )
 
-    # TODO: For now, only RandomWalk has constant data variables yet
-    # we define a generic dummy function here
     def _constant_data_vars(self) -> dict:
         """Parameterization-specific entries for ``constant_data``."""
         return {}
@@ -527,12 +537,8 @@ class _BaseEngine(abc.ABC):
         data_vars.update(self._constant_data_vars())
         return xr.Dataset(data_vars)
 
-    # TODO: this function should be internal, no need to expose it to the user.
-    # as it needs full posterior and we compute it after sampling any way. 
-    # Fix before release
-    def pointwise_log_lik(self, idata: "xr.DataTree") -> "xr.DataArray":
+    def _pointwise_log_lik(self, idata: "xr.DataTree") -> "xr.DataArray":
         if self._data is None:
-            # TODO; after interval, this should be unreachable, fix before release
             raise RuntimeError("No data attached. Call `.with_data(...)` first.")
         import xarray as xr
 
@@ -546,7 +552,6 @@ class _BaseEngine(abc.ABC):
             ],
             axis=-1,
         )
-        # TODO: check this math
         # L_Sigma = diag(sigma_y) @ L_Omega; solve via two steps to avoid
         # materialising L_Sigma and to exploit the known triangular structure.
         sigma_y = np.exp(post["log_sigma_y"].values)  # (chain, draw, D)
@@ -581,11 +586,9 @@ class _BaseEngine(abc.ABC):
             },
         )
 
-    # TODO: this function should be internal, no need to expose it to the user.
-    def posterior_predictive(
+    def _posterior_predictive(
         self, idata: "xr.DataTree", seed: int | None = None
     ) -> "xr.Dataset":
-        # TODO: after interval, this should be unreachable, fix before release
         if self._data is None:
             raise RuntimeError("No data attached. Call `.with_data(...)` first.")
         import xarray as xr
@@ -606,7 +609,6 @@ class _BaseEngine(abc.ABC):
         n_chain, n_draw, D = mu_y.shape
         n_windows = len(self._data["mean_diversity"])
 
-        # TODO; check this math
         # y = mu_y + L_Sigma z,  L_Sigma = diag(sigma_y) L_Omega,  z ~ N(0, I).
         rng = np.random.default_rng(seed)
         z = rng.standard_normal((n_chain, n_draw, n_windows, D))
@@ -760,6 +762,8 @@ class _BaseEngine(abc.ABC):
         """MC sufficient stats for a demography, honouring rtol and min_replicates."""
         from . import sim_sufficient_stats
 
+        assert self._data is not None
+        assert self._left_bins is not None and self._right_bins is not None
         demography = self._build_demography(params)
         common = dict(
             demography=demography,
@@ -791,10 +795,6 @@ class _BaseEngine(abc.ABC):
             ld = np.concatenate([ld, ld2])
         return np.asarray(pi), np.asarray(ld)
 
-    # The posterior predictive we offer rely on our surrogate likelihood to be accurate.
-    # For this reason, it is still important to be able to convert the posterior to a msprime demography.
-    # and simulate actual datasets. 
-    # TODO; Low priority, but this should be tested before release
     @staticmethod
     def _to_sample_dataset(posterior) -> "xr.Dataset":
         """Coerce a posterior into a ``Dataset`` with a single ``sample`` dim."""
@@ -858,10 +858,10 @@ class _BaseEngine(abc.ABC):
         """Plot ``N_e(t)`` for all posterior draws; returns the axes."""
         from . import _plotting as pg
 
-        return pg.plot_demography(self.to_msprime_demography(posterior), ax=ax, color=color)
+        return pg.plot_demography(
+            self.to_msprime_demography(posterior), ax=ax, color=color
+        )
 
-    # For interactive notebooks, we provide a nice summary of the model.
-    # TODO: this should be in a separate module, low priority. 
     @property
     def _title(self) -> str:
         """Heading shown in the repr/HTML summary; subclasses may override."""

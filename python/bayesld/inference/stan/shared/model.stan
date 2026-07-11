@@ -1,27 +1,31 @@
-// ---- model.stan ----
-// Shared tail of the model block: GP-surrogate priors, the two synthetic-point
-// likelihood terms (per-bin bias GP + sufficient-statistic MVN), and the joint
-// MVN observation model over the real windows. The demography-specific priors
-// are placed *above* this include.
+// The likelihood terms to jointly learn the surrogate likelihood and the parameters of the data. 
 
-// ── GP-surrogate priors ──
+// GP-surrogate priors
+// See https://users.aalto.fi/~ave/casestudies/Motorcycle/motorcycle.html
 gp_rho   ~ inv_gamma(5, 5);
 gp_alpha ~ normal(0, gp_alpha_std);
 to_vector(beta_ld) ~ std_normal();
 L_Omega     ~ lkj_corr_cholesky(lkj_eta);
 log_sigma_y ~ normal(log_sigma_y_loc, log_sigma_y_scale);
 
-// Per-bin GP evaluation at training inputs (bias rows 1..n_bias, sigma rows
-// n_bias+1..n_train).
+// Learn the bias mapping. To keep things simple, we don't learn the mapping
+// theta parameters -> bias
+// as that would grow in dimensionality quickly. Instead, we learn the mapping
+// f(theta) -> bias (so it's a scalar->scalar mapping)
+// Simply using f(theta) as the predicted LD seems to work well, although
+// extending GP would be easy. 
 matrix[n_train, n_bins] gp_bias_train;
 for (b in 1:n_bins) gp_bias_train[, b] = PHI_ld_train[b] * col(w_ld, b);
 
+// We have measured the bias across many replicates and estimated its the stderr. 
+// We put a Normal likelihood on the output of the GP
 if (n_bias > 0) {
   for (b in 1:n_bins) {
     rel_bias_train[b] ~ normal(gp_bias_train[1:n_bias, b], eps_rel_train[b]);
   }
 }
 
+// We also estimate the covariance matrix of the MvN likelihood
 if (n_sigma > 0) {
   // Sufficient-statistic MVN: each sigma point contributes
   //   log p({y_ij}_{j=1..N_i} | mu_i, Sigma)
@@ -50,5 +54,6 @@ if (n_sigma > 0) {
   target += -0.5 * (quad_mu + quad_S) - 0.5 * sum(N_rep_sigma) * log_det_Sigma;
 }
 
-// ── Observation model: joint MVN over real windows ──
+// Finally, the actual data. Here mu_y is the expected (corrected) mean value 
+// of the summary statistics
 y_obs ~ multi_normal_cholesky(mu_y, L_Sigma);

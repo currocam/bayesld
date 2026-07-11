@@ -1,7 +1,5 @@
-// ---- finite_sample.stan ----
-// Finite-sample bias correction for LD. Only diploid data (ploidy == 2) carries
-// this bias; for any other ploidy the input is returned unchanged (identity).
-// S = 2 * sample_size (haploid count for diploid individuals).
+// From Fournier 2023, the correction factor they apply that seems
+// to work well in diploids only
 vector correct_ld_finite_sample(vector mu, int sample_size, int ploidy) {
   if (ploidy != 2) return mu;
   int S = 2 * sample_size;

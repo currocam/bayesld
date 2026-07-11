@@ -1,3 +1,17 @@
+---
+jupytext:
+  formats: ipynb,md:myst
+  text_representation:
+    extension: .md
+    format_name: myst
+    format_version: 0.13
+    jupytext_version: 1.19.4
+kernelspec:
+  display_name: bayesld (.venv)
+  language: python
+  name: bayesld
+---
+
 # bayesld
 
 `bayesld` is a Python package for Bayesian inference of very recent demography.
@@ -239,7 +253,7 @@ posterior_constant = constant_model.sample(
 )
 ```
 
-From the ArviZ package, we have a variety of opinionated tools to diagnose MCMC convergence. As a rule of thumb, we aim for an $\hat r < 1.01$ and an effective sample size (`ess`) greater than 400. In this case, the MCMC chains have explored the parameter space without problems. 
+From the ArviZ package, we have a variety of opinionated tools to diagnose MCMC convergence. As a rule of thumb, we aim for an $\hat r < 1.01$ and an effective sample size (`ess`) greater than 400. In this case, the MCMC chains have explored the parameter space without problems.
 
 ```{code-cell} ipython3
 az.summary(posterior_constant, var_names="Ne_values", kind="diagnostics")
@@ -310,11 +324,17 @@ def plot_posterior_predictive(idata, colors=("black", "C0")):
     return fig
 ```
 
-Overall, the absolute goodness of fit is not terrible, although we do observe a positive bias in the predicted LD pattern. This is expected: the real data is undergoing a bottleneck, and as such experiences higher drift (and lower $N_e$). A stronger bottleneck would accentuate the bias. In other words, there's no constant $N_e$ value that's consistent with both the observed genetic diversity and LD pattern. 
+```{code-cell} ipython3
+plot_posterior_predictive(posterior_constant);
+```
+
+From the fitted model, we can simulate new datasets and plot the (posterior predictive) distribution of any summary statistics. Ideally, we should not be able to tell them apart (other than because the observed data point is coloured in black). For this model, the absolute goodness of fit is bad, and we observe a positive bias in the predicted LD pattern. 
+
+This is expected: the real data is undergoing a bottleneck, and as such experiences higher drift (and lower $N_e$). A stronger bottleneck would accentuate the bias. In other words, there's no constant $N_e$ value that's consistent with both the observed genetic diversity and LD pattern. 
 
 <details>
   <summary>More on posterior predictive checks</summary>
-    I've found the mean to be informative of model misspecification in this model. However, it is often useful to look at the entire distribution across windows. We can use `az.plot_ppc_dist`. From the fitted model we can simulate new datasets and plot the distribution across windows. Ideally, we should not be able to tell them apart (other than because the observed data-point is coloured in black).
+    I've found the mean to be informative of model misspecification in this model. However, it is often useful to look at the entire distribution across windows. We can use `az.plot_ppc_dist`.
 
     Try running 
 
@@ -323,9 +343,7 @@ Overall, the absolute goodness of fit is not terrible, although we do observe a 
     ```
 </details>
 
-```{code-cell} ipython3
-plot_posterior_predictive(posterior_constant);
-```
++++
 
 ## Fitting a two-epoch model
 
@@ -387,7 +405,7 @@ _samples = az.extract(prior_2epoch, num_samples=50, random_seed=1)
 two_epoch_model.plot_demography(_samples);
 ```
 
-The prior seems broad enough for our purpose, although it sets a high probability density of changes in $N_e$ happening a few hundred generations ago. However, this will not affect our results here. Additionally, one can use the `.to_msprime_demography` method to obtain `msprime.Demography` objects from which you can simulate genetic data (and perform so-called prior predictive checks). 
+The prior seems broad enough for our purpose, although it sets a high probability density of changes in $N_e$ happening a few hundred generations ago. However, this will not affect our results here. Additionally, one can use the `.to_msprime_demography` method to obtain `msprime.Demography` objects from which you can simulate genetic data (and perform so-called prior predictive checks).
 
 +++
 
@@ -412,7 +430,7 @@ posterior_2epoch = two_epoch_model.sample(
 )
 ```
 
-As before, we first check that the Markov chain has converged (otherwise, we should increase the number of samples and active learning rounds). 
+As before, we first check that the Markov chain has converged (otherwise, we should increase the number of samples and active learning rounds).
 
 ```{code-cell} ipython3
 az.summary(
@@ -453,7 +471,7 @@ The posterior predictive checks show a much better absolute goodness of fit.
 plot_posterior_predictive(posterior_2epoch);
 ```
 
-Finally, we can visualise the trajectories implied by a few draws from the posterior (as we did with the prior). We have successfully recovered the true bottleneck. 
+Finally, we can visualise the trajectories implied by a few draws from the posterior (as we did with the prior). We have successfully recovered the true bottleneck.
 
 ```{code-cell} ipython3
 _samples = az.extract(posterior_2epoch, num_samples=50, random_seed=1)
@@ -565,7 +583,7 @@ _samples = az.extract(posterior_exp, num_samples=50, random_seed=1)
 exp_model.plot_demography(_samples)
 ```
 
-Let's evaluate the absolute goodness of fit. In this case, the posterior predictive distribution is almost identical to the one from the two-epoch model. This means that it will be very hard (if not impossible) to distinguish between both demographic scenarios from the considered genetic data alone. We will discuss this again in a later section about model comparison. 
+Let's evaluate the absolute goodness of fit. In this case, the posterior predictive distribution is almost identical to the one from the two-epoch model. This means that it will be very hard (if not impossible) to distinguish between both demographic scenarios from the considered genetic data alone. We will discuss this again in a later section about model comparison.
 
 ```{code-cell} ipython3
 plot_posterior_predictive(posterior_exp);
@@ -593,7 +611,7 @@ N_e(t) &= N_i \qquad \text{for } t \text{ in epoch } i,\quad i = 0, \ldots, 100.
 \end{align}
 $$
 
-Let's instantiate the model: 
+Let's instantiate the model:
 
 ```{code-cell} ipython3
 from bayesld.inference import RandomWalk
@@ -615,7 +633,7 @@ walk_model = (
 walk_model
 ```
 
-For this model, it would not make sense to look at a table with a 100s of parameters, and it might be difficult to have intuitions about the prior. Instead, we just sample from the prior and visualise it: 
+For this model, it would not make sense to look at a table with a 100s of parameters, and it might be difficult to have intuitions about the prior. Instead, we just sample from the prior and visualise it:
 
 ```{code-cell} ipython3
 prior_walk = walk_model.sample_prior()
@@ -625,7 +643,7 @@ walk_model.plot_demography(_samples)
 
 The $N_e$ trajectory seems mostly flat with a bit of wiggling. You may increase or decrease `sigma_step` and observe how the prior distribution changes. Let's continue with a value of 0.05 and repeat the fitting procedure. 
 
-Caution: This model will take longer than the previous ones. The first warm-up iterations will be specially slow, but the algorithm should speed up after choosing an appropriate step size. 
+Caution: This model will take longer than the previous ones. The first warm-up iterations will be specially slow, but the algorithm should speed up after choosing an appropriate step size.
 
 ```{code-cell} ipython3
 %%time 
@@ -646,7 +664,7 @@ posterior_walk = walk_model.sample(
 )
 ```
 
-One last time, we check that the MCMC has converged. With this many parameters, we can use a convergence diagnostic plot instead, in which all estimate variables are grouped together. We can see the MCMC fitted without problems. 
+One last time, we check that the MCMC has converged. With this many parameters, we can use a convergence diagnostic plot instead, in which all estimate variables are grouped together. We can see the MCMC fitted without problems.
 
 ```{code-cell} ipython3
 az.plot_convergence_dist(posterior_walk);
@@ -668,7 +686,6 @@ Despite having many more parameters, the absolute goodness-of-fit does not seem 
 plot_posterior_predictive(posterior_walk);
 ```
 
-
 For this model, looking at the table of parameters directly is not very informative. If we visualise the $N_e$ trajectories directly, we can observe that (1) the posterior is very different from the prior (we learned from data!) and (2) they are qualitatively very similar to the fitted exponential model. This is a good sign that we should not keep increasing the complexity of the models considered.
 
 ```{code-cell} ipython3
@@ -678,7 +695,7 @@ walk_model.plot_demography(_samples);
 
 ## Saving output
 
-I recommend saving the output to a `netcdf` for intercompatibility across languages and with the `ArViz` ecosystem. 
+I recommend saving the output to a `netcdf` for intercompatibility across languages and with the `ArViz` ecosystem.
 
 ```{code-cell} ipython3
 import h5py
@@ -725,7 +742,7 @@ ms_demography = {
 }
 ```
 
-Let's define a small helper function to simulate the different datasets: 
+Let's define a small helper function to simulate the different datasets:
 
 ```{code-cell} ipython3
 %%time
@@ -831,7 +848,7 @@ Assessing convergence in Bayesian inference is typically done by running differe
 
 Hopefully, it should be easy enough to repeat the inference processes with different random seeds and later combine the output in a single chain. 
 
-Let's define a final model: 
+Let's define a final model:
 
 ```{code-cell} ipython3
 final_model = PiecewiseConstant(num_epochs=2).with_data(
@@ -891,5 +908,10 @@ idata = concat_chains(_idata1, _idata2)
 In this case, we can assess that both independent chains appear to have converged.
 
 ```{code-cell} ipython3
-az.plot_trace(idata, var_names=["Ne_values", "t_boundaries"]);
+idata["posterior"]["fraction"] = idata["posterior"]["Ne_values"][:, :, 0] /  idata["posterior"]["Ne_values"][:, :, -1]
+az.plot_trace(idata, var_names=["fraction", "t_boundaries", "Ne_values"]);
+```
+
+```{code-cell} ipython3
+az.plot_pair(idata, var_names=["fraction", "t_boundaries"]);
 ```

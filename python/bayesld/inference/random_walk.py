@@ -175,6 +175,7 @@ class RandomWalk(_BaseEngine):
 
     def _default_prior(self) -> dict:
         """Empirical-Bayes prior: ancient Ne centred on the Watterson estimate pi/(4·mu)."""
+        assert self._data is not None
         pi = self._data["mean_diversity"]
         mu = self._data["mutation_rate"]
         log_ne_mu = float(np.log(np.mean(pi) / (4.0 * mu)))
@@ -185,6 +186,7 @@ class RandomWalk(_BaseEngine):
         }
 
     def _prior_stan_data(self) -> dict:
+        assert self._prior is not None
         return {
             "n_epochs": self.num_epochs,
             "grid": self._grid,
@@ -227,7 +229,7 @@ class RandomWalk(_BaseEngine):
         # log_Ne[i] = log_ne_a + reverse-cumsum of steps from epoch i (recent) up
         # to the ancient anchor; ancient epoch (last) carries no step.
         rev_cumsum = np.cumsum(steps[:, ::-1], axis=1)[:, ::-1]
-        log_ne = np.empty((total, self.num_epochs))
+        log_ne: np.ndarray = np.empty((total, self.num_epochs))
         log_ne[:, -1] = log_ne_a
         log_ne[:, :-1] = log_ne_a[:, None] + rev_cumsum
         ne_values = np.exp(log_ne)
@@ -285,6 +287,7 @@ class RandomWalk(_BaseEngine):
     def _expected(self, params: dict) -> tuple[float, np.ndarray]:
         from .. import deterministic as det
 
+        assert self._data is not None
         det_pi, det_ld = det.expected_piecewise_constant(
             params["ne"],
             params["t"],

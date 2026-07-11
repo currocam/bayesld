@@ -312,7 +312,6 @@ def test_missing_genotypes_do_not_crash(tmp_path):
 def test_vcf_matches_tree_sequence_haploid(tmp_path):
     """Haploid data: data_from_vcf matches data_from_tree_sequence with ploidy=1."""
     import msprime
-    import tskit as tsk
 
     recombination_rate = 1e-8
     ts = msprime.sim_ancestry(

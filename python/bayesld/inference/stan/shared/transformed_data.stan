@@ -1,9 +1,6 @@
-// ---- transformed_data.stan ----
-// Fully parameterization-independent: stacks the observed windows into y_obs,
-// derives the Watterson-based log-Ne offset used to centre the demographic
-// parameters, and precomputes the per-bin HSGP design matrices for the training
-// (bias + sigma) points. Include as the entire transformed data block body.
-
+// Shared Stan's transformed data section
+// User provides mean genetic diversity and LD. We simply put everything 
+// in a n_windows times n_bins+1 matrix
 int D = n_bins + 1;  // joint dim: [pi, ld_1, ..., ld_B]
 
 array[num_windows] vector[D] y_obs;
@@ -12,11 +9,13 @@ for (w in 1:num_windows) {
   for (b in 1:n_bins) y_obs[w, b + 1] = ld_mat[w, b];
 }
 
-// Initial guess to centre the log-Ne parameters around the data.
+// Stan's initialization relies on parameters to be centred. 
+// I found that shifting the N_e parameters to the ballpark-Ne estimator works fine
 real log_ne_offset = log(mean(pi_array) / (4.0 * mutation_rate));
 
+// GP bookeeping
+// https://users.aalto.fi/~ave/casestudies/Motorcycle/motorcycle.html
 real L_ld = hsgp_c * 3.0;
-
 // Pool bias and sigma training inputs per bin so we evaluate the GP once
 // per bin and slice the result for both likelihood terms.
 int n_train = n_bias + n_sigma;

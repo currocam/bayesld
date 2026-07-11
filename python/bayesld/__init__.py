@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 import numpy as np
 import tskit
 from numpy.typing import NDArray
@@ -5,8 +7,11 @@ from tqdm.auto import tqdm
 
 # Set module docstring from the bayesld module
 from . import bayesld as _bayesld
-from . import deterministic, surrogate_likelihoods
-from .bayesld import *
+from . import deterministic
+from .bayesld import *  # noqa: F403
+
+if TYPE_CHECKING:
+    import msprime
 
 
 def linear_bins(
@@ -325,12 +330,12 @@ def data_from_vcf(
     }
 
 
-from . import montecarlo
-from .inference import sim_sufficient_stats
+from . import montecarlo  # noqa: E402
+from .inference import sim_sufficient_stats  # noqa: E402
 
 __doc__ = _bayesld.__doc__
 if hasattr(_bayesld, "__all__"):
     __all__ = list(_bayesld.__all__)
 else:
     __all__ = []
-__all__ += ["sim_sufficient_stats"]
+__all__ += ["deterministic", "montecarlo", "sim_sufficient_stats"]

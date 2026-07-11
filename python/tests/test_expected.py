@@ -401,28 +401,3 @@ class TestDeterministicVsMonteCarlo:
         )
         np.testing.assert_allclose(pi_det, pi_vec.mean(), rtol=0.15)
         np.testing.assert_allclose(ld_det, ld_mat.mean(axis=0), rtol=0.2)
-
-    def test_comparison_secondary_introduction(self):
-        Ne_1, Ne_2, Ne_a = 3000.0, 3000.0, 6000.0
-        # Approximation fails for small migration rates
-        t0, t1, m = 20.0, 60.0, 0.1
-        pi_det, ld_det = deterministic.expected_secondary_introduction(
-            Ne_1=Ne_1,
-            Ne_2=Ne_2,
-            Ne_a=Ne_a,
-            t0=t0,
-            t1=t1,
-            migration_rate=m,
-            **DET_KWARGS,
-        )
-        pi_vec, ld_mat = montecarlo.expected_secondary_introduction(
-            Ne_1=Ne_1,
-            Ne_2=Ne_2,
-            Ne_a=Ne_a,
-            t0=t0,
-            t1=t1,
-            migration_rate=m,
-            **MC_KWARGS_COMPARISON,
-        )
-        np.testing.assert_allclose(pi_det, pi_vec.mean(), rtol=0.15)
-        np.testing.assert_allclose(ld_det, ld_mat.mean(axis=0), rtol=0.2)

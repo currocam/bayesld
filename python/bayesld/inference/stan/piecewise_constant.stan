@@ -1,16 +1,9 @@
 // Piecewise-constant-Ne inference engine.
-//
-// Everything not specific to this parameterization is #included from shared/*.stan
-// (the GP-bias surrogate, the joint-MVN observation model, and the standardized
-// data/transformed-data machinery). Only the piecewise-constant demography lives
-// here: the log-sum-exp expectation functions, the per-epoch lognormal priors,
-// and the ordered log-boundary parameterization.
 functions {
   #include shared/gpbasisfun.stan
   #include shared/finite_sample.stan
 
-  // ---- piecewise_constant demography ----
-  // Survival probability at genetic distance u (numerically stable log-sum-exp).
+  // Survival probability under SMC_prime
   real S_u_piecewise_constant(real u, int n_epochs, vector Ne_values, vector t_boundaries) {
     array[n_epochs] real log_terms;
     real Gamma_prev = 0.0;
@@ -31,9 +24,7 @@ functions {
     return exp(log_sum_exp(to_vector(log_terms)));
   }
 
-  // Expected LD per bin via Gauss-Legendre quadrature over the bin width. Plain
-  // serial loop over bins (no map_rect marshalling): each bin is a bin-averaged
-  // survival probability, 0.5 * sum_k w_k S_u(u_k).
+  // Numerical integration in bins
   vector mu_ld_piecewise_constant(int n_epochs, vector Ne_values, vector t_boundaries,
                                   vector left_bins, vector right_bins,
                                   int n_quad, vector gl_nodes, vector gl_weights) {
@@ -52,7 +43,7 @@ functions {
     return result;
   }
 
-  // Expected genetic diversity (numerically stable log-sum-exp / log-diff-exp).
+  // Expected genetic diversity
   real mu_div_piecewise_constant(int n_epochs, vector Ne_values, vector t_boundaries,
                                  real mutation_rate) {
     array[n_epochs] real log_terms;
@@ -77,7 +68,6 @@ functions {
 data {
   #include shared/data_stats.stan
 
-  // ── Demographic dimension + lognormal priors (data-driven, per epoch) ──
   int<lower=1> n_epochs;
   vector[n_epochs]         mu_log_ne;
   vector<lower=0>[n_epochs] sigma_log_ne;
@@ -92,7 +82,6 @@ transformed data {
 }
 
 parameters {
-  // ── Demography: lognormal Ne per epoch, ordered lognormal boundaries ──
   vector<offset=log_ne_offset>[n_epochs] log_Ne;
   ordered[n_epochs - 1] log_t;
 
@@ -100,7 +89,6 @@ parameters {
 }
 
 transformed parameters {
-  // ── Demography: expected_pi + finite-sample-corrected approx_expected_ld ──
   vector<lower=0>[n_epochs]     Ne_values    = exp(log_Ne);
   vector<lower=0>[n_epochs - 1] t_boundaries = exp(log_t);
 
@@ -115,7 +103,7 @@ transformed parameters {
 }
 
 model {
-  // ── Demographic priors (lognormal) ──
+  // Demographic priors
   log_Ne ~ normal(mu_log_ne, sigma_log_ne);
   log_t  ~ normal(mu_log_t,  sigma_log_t);
 

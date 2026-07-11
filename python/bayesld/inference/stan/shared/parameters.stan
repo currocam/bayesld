@@ -1,12 +1,10 @@
-// ---- parameters.stan ----
-// GP-surrogate parameters shared by every engine. Include at the *bottom* of the
-// parameters block, after the demography-specific parameters.
-
-// ── GP surrogate ──
+// Shared parameters to be inferred
+// GP surrogate
 real<lower=0> gp_rho;
 real<lower=0> gp_alpha;
 matrix[hsgp_m_ld, n_bins] beta_ld;
 
-// Theta-invariant joint covariance Sigma = diag(sigma_y) Omega diag(sigma_y).
+// Fitting the Stan’s Cholesky factor of teh covariance matrix
+// https://mc-stan.org/docs/reference-manual/transforms.html#cholesky-factor-of-covariance-matrix-transform
 vector[n_bins + 1] log_sigma_y;
 cholesky_factor_corr[n_bins + 1] L_Omega;

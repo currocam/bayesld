@@ -7,12 +7,12 @@ import jax.numpy as jnp
 import numpy as np
 
 # Pre-compute quadrature rules (numpy for setup, then store as JAX arrays)
-_LEGENDRE_X_50, _LEGENDRE_W_50 = np.polynomial.legendre.leggauss(50)
-_LEGENDRE_X_50 = jnp.asarray(_LEGENDRE_X_50)
-_LEGENDRE_W_50 = jnp.asarray(_LEGENDRE_W_50)
-_LEGENDRE_X_10, _LEGENDRE_W_10 = np.polynomial.legendre.leggauss(10)
-_LEGENDRE_X_10 = jnp.asarray(_LEGENDRE_X_10)
-_LEGENDRE_W_10 = jnp.asarray(_LEGENDRE_W_10)
+_legendre_x_50, _legendre_w_50 = np.polynomial.legendre.leggauss(50)
+_LEGENDRE_X_50 = jnp.asarray(_legendre_x_50)
+_LEGENDRE_W_50 = jnp.asarray(_legendre_w_50)
+_legendre_x_10, _legendre_w_10 = np.polynomial.legendre.leggauss(10)
+_LEGENDRE_X_10 = jnp.asarray(_legendre_x_10)
+_LEGENDRE_W_10 = jnp.asarray(_legendre_w_10)
 
 
 def gauss(a, b, x=_LEGENDRE_X_10, w=_LEGENDRE_W_10):
@@ -437,7 +437,6 @@ def expected_piecewise_constant(
     # Split into finite epochs and last infinite epoch
     Ne_finite = Ne_values[:-1]
     Ne_last = Ne_values[-1]
-    eltype = jax.typeof(Ne_last)
 
     # Compute expected genetic diversity (heterozygosity)
     def compute_diversity():

@@ -1,17 +1,9 @@
 // Random-walk-Ne inference engine.
-//
-// Everything not specific to this parameterization is #included from shared/*.stan
-// (the GP-bias surrogate, the joint-MVN observation model, and the standardized
-// data/transformed-data machinery). The random walk is piecewise-constant in Ne
-// with a *fixed* grid of epoch boundaries; only Ne per epoch is inferred, as a
-// log-space random walk anchored at the ancient size. The expectation functions
-// are therefore shared verbatim with the piecewise-constant engine.
 functions {
   #include shared/gpbasisfun.stan
   #include shared/finite_sample.stan
 
-  // ---- piecewise_constant demography (shared with the fixed-grid random walk) ----
-  // Survival probability at genetic distance u (numerically stable log-sum-exp).
+  // Survival probability under the SMC_prime
   real S_u_piecewise_constant(real u, int n_epochs, vector Ne_values, vector t_boundaries) {
     array[n_epochs] real log_terms;
     real Gamma_prev = 0.0;
@@ -32,9 +24,7 @@ functions {
     return exp(log_sum_exp(to_vector(log_terms)));
   }
 
-  // Expected LD per bin via Gauss-Legendre quadrature over the bin width. Plain
-  // serial loop over bins (no map_rect marshalling): each bin is a bin-averaged
-  // survival probability, 0.5 * sum_k w_k S_u(u_k).
+  // Numerical integration in bins
   vector mu_ld_piecewise_constant(int n_epochs, vector Ne_values, vector t_boundaries,
                                   vector left_bins, vector right_bins,
                                   int n_quad, vector gl_nodes, vector gl_weights) {
@@ -53,7 +43,7 @@ functions {
     return result;
   }
 
-  // Expected genetic diversity (numerically stable log-sum-exp / log-diff-exp).
+  // Expected genetic diversity
   real mu_div_piecewise_constant(int n_epochs, vector Ne_values, vector t_boundaries,
                                  real mutation_rate) {
     array[n_epochs] real log_terms;
@@ -78,14 +68,10 @@ functions {
 data {
   #include shared/data_stats.stan
 
-  // ── Demographic dimension + fixed grid ──
+  // We fix the epoch boundaries
   int<lower=2> n_epochs;
-  vector<lower=0>[n_epochs - 1] grid;  // fixed epoch boundaries (generations)
+  vector<lower=0>[n_epochs - 1] grid;
 
-  // ── Random-walk prior (data-driven) ──
-  //   log Ne of the most ancient epoch  ~ normal(mu_log_ne, sigma_log_ne)
-  //   log-fold step between adjacent epochs (ancient → recent) ~ normal(0, sigma_step)
-  // sigma_step is per-step, so the innovation scale can vary along the grid.
   real         mu_log_ne;
   real<lower=0> sigma_log_ne;
   vector<lower=0>[n_epochs - 1] sigma_step;
@@ -98,9 +84,6 @@ transformed data {
 }
 
 parameters {
-  // ── Demography: log-space random walk over a fixed epoch grid ──
-  // log_ne_a anchors the most ancient epoch; each step is a log-fold change to
-  // the next (more recent) epoch.
   real<offset=log_ne_offset> log_ne_a;
   vector[n_epochs - 1] steps;
 
@@ -108,9 +91,6 @@ parameters {
 }
 
 transformed parameters {
-  // ── Demography: expected_pi + finite-sample-corrected approx_expected_ld ──
-  // Reverse cumulative sum: log_Ne of each epoch is the ancient anchor plus the
-  // accumulated steps down to that epoch (ancient = index n_epochs, recent = 1).
   vector[n_epochs] log_Ne;
   log_Ne[n_epochs] = log_ne_a;
   for (i in 1:n_epochs - 1) {
@@ -131,7 +111,7 @@ transformed parameters {
 }
 
 model {
-  // ── Demographic priors: lognormal ancient anchor + Gaussian random-walk steps ──
+  // Demographic priors
   log_ne_a ~ normal(mu_log_ne, sigma_log_ne);
   steps    ~ normal(0, sigma_step);
 

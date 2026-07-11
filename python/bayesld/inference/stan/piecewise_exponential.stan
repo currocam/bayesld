@@ -1,29 +1,14 @@
 // Two-phase piecewise-exponential-Ne inference engine.
-//
-// Everything not specific to this parameterization is #included from shared/*.stan
-// (the GP-bias surrogate, the joint-MVN observation model, and the standardized
-// data/transformed-data machinery). Only the two-phase demography lives here:
-//   Ne(t) = Ne_c * exp(-alpha * t)   for t < t0
-//   Ne(t) = Ne_a                     for t >= t0
-// with alpha = (log Ne_c - log Ne_a) / t0 so the phases meet at t0. It is
-// parameterized by three scalars: log_ne_a, log_t and log_alpha_fold (with
-// Ne_c = Ne_a * exp(log_alpha_fold) and alpha = log_alpha_fold / t0).
 functions {
   #include shared/gpbasisfun.stan
   #include shared/finite_sample.stan
 
-  // ---- piecewise_exponential demography ----
-  // All alpha-dependent expressions use expm1_over_x to remove the removable
-  // singularity at alpha = 0; the formulas are valid for all alpha.
-
-  // expm1(x)/x, stable at x=0 (limit = 1). expm1 is accurate for all x != 0.
   real expm1_over_x(real x) {
     if (x == 0.0) return 1.0;
     return expm1(x) / x;
   }
 
-  // Survival probability at genetic distance u (numerically stable log-sum-exp).
-  // piece1 [0, t0]: Gauss-Legendre quadrature | piece2 [t0, inf): closed form.
+  // Survival probability in pieces under the SMC
   real S_u_piecewise_exponential(real u, real Ne_c, real Ne_a, real t0, real alpha,
                                  int n_quad, vector gl_nodes, vector gl_weights) {
     real half_t0 = t0 / 2.0;
@@ -39,9 +24,7 @@ functions {
     return exp(log_sum_exp([log_piece1, log_piece2]'));
   }
 
-  // Expected LD per bin via Gauss-Legendre quadrature over the bin width. Plain
-  // serial loop over bins: each bin is a bin-averaged survival probability,
-  // 0.5 * sum_k w_k S_u(u_k).
+  // Numerical integration in bins
   vector mu_ld_piecewise_exponential(real Ne_c, real Ne_a, real t0, real alpha,
                                      vector left_bins, vector right_bins,
                                      int n_quad, vector gl_nodes, vector gl_weights) {
@@ -61,7 +44,7 @@ functions {
     return result;
   }
 
-  // Expected genetic diversity (numerically stable log-sum-exp).
+  // Expected genetic diversity
   real mu_div_piecewise_exponential(real Ne_c, real Ne_a, real t0, real alpha,
                                     real mutation_rate,
                                     int n_quad, vector gl_nodes, vector gl_weights) {
@@ -80,11 +63,6 @@ functions {
 
 data {
   #include shared/data_stats.stan
-
-  // ── Lognormal priors (data-driven; scalar per parameter) ──
-  //   log_ne_a       ~ normal(mu_log_ne_a,       sigma_log_ne_a)
-  //   log_t          ~ normal(mu_log_t,          sigma_log_t)
-  //   log_alpha_fold ~ normal(mu_log_alpha_fold, sigma_log_alpha_fold)
   real         mu_log_ne_a;
   real<lower=0> sigma_log_ne_a;
   real         mu_log_t;
@@ -100,7 +78,6 @@ transformed data {
 }
 
 parameters {
-  // ── Demography: ancient Ne, exponential start, log-fold change to contemporary ──
   real<offset=log_ne_offset> log_ne_a;
   real log_t;
   real log_alpha_fold;
@@ -109,7 +86,6 @@ parameters {
 }
 
 transformed parameters {
-  // ── Demography: expected_pi + finite-sample-corrected approx_expected_ld ──
   real<lower=0> Ne_a = exp(log_ne_a);
   real<lower=0> t0   = exp(log_t);
   real log_ne_c      = log_ne_a + log_alpha_fold;
@@ -129,7 +105,7 @@ transformed parameters {
 }
 
 model {
-  // ── Demographic priors (lognormal) ──
+  // Demographic priors
   log_ne_a       ~ normal(mu_log_ne_a,       sigma_log_ne_a);
   log_t          ~ normal(mu_log_t,          sigma_log_t);
   log_alpha_fold ~ normal(mu_log_alpha_fold, sigma_log_alpha_fold);

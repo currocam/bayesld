@@ -19,6 +19,8 @@ dependencies = [
     "cmdstanpy>=1.3.0",
     "cyvcf2>=0.32.1",
     "dill>=0.4.1",
+    "h5netcdf>=1.8.1",
+    "h5py>=3.16.0",
     "jax>=0.4.13",
     "joblib>=1.0.0",
     "msprime>=1.4.0",
@@ -38,16 +40,30 @@ tests = [
 ]
 [tool.pytest.ini_options]
 markers = [
-    "slow: marks tests as slow (run with --run-slow)",
+    "slow: marks tests as slow",
 ]
-addopts = "-m 'not slow'"
+
+[tool.ruff]
+extend-exclude = ["*.ipynb", "manuscript", "benches"]
+
+[tool.mypy]
+files = ["python/bayesld"]
+
+[[tool.mypy.overrides]]
+module = ["bayesld.bayesld", "msprime.*", "cyvcf2.*", "tskit.*", "arviz.*", "cmdstanpy.*", "joblib.*", "tqdm.*"]
+ignore_missing_imports = true
 
 [tool.uv]
-package = false
+package = true
 
 [tool.maturin]
 python-source = "python"
-include = [{path = "python/bayesld/stan/**", format = "sdist"}, {path = "python/bayesld/stan/**", format = "wheel"}]
+include = [
+    { path = "python/bayesld/stan/**", format = "sdist" },
+    { path = "python/bayesld/stan/**", format = "wheel" },
+    { path = "python/bayesld/inference/stan/**/*.stan", format = "sdist" },
+    { path = "python/bayesld/inference/stan/**/*.stan", format = "wheel" },
+]
 
 [dependency-groups]
 dev = [
