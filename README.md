@@ -1,10 +1,20 @@
 # bayesld
 
-`bayesld` is a Python package for Bayesian inference of very recent population size history \(N_e(t)\) from linkage disequilibrium (LD) and genetic diversity.
+`bayesld` is a Python package for Bayesian inference of very recent population size history $N_e(t)$ from linkage disequilibrium and genetic diversity.
 
 ## Installation
 
-Requires **Python ≥ 3.11**. All commands install from GitHub: [`https://github.com/currocam/bayesld`](https://github.com/currocam/bayesld).
+For now, you can install it from GitHub: [`https://github.com/currocam/bayesld`](https://github.com/currocam/bayesld).
+
+Caveat: I haven't tested the installation instructions extensively. Please submit a bug if you cannot install. 
+
+### pixi
+
+```bash
+pixi init
+pixi add python=3.12 cmdstanpy
+pixi add --pypi bayesld@https://github.com/currocam/bayesld.git
+```
 
 ### conda
 
@@ -57,10 +67,9 @@ For preparing the input data from a VCF, see [`examples/data_from_vcf.ipynb`](ex
 
 ## Development
 
-The package includes a compiled Rust extension (requires Rust nightly for `portable_simd`). Build it before running any code:
-
+The package includes a compiled Rust extension. 
 ```bash
 make build    # RUSTUP_TOOLCHAIN=nightly uvx maturin develop --release
-make test     # full test suite (Stan/msprime/arviz included)
-make format   # ruff format
+make test
+make format
 ```
