@@ -680,7 +680,7 @@ posterior_walk["posterior"]["fraction"] = _contemporary_ne / _ancient_ne
 az.plot_dist(posterior_walk, var_names="fraction")
 ```
 
-Despite having many more parameters, the absolute goodness-of-fit does not seem to have improved. Also, it doesn't seem to have overfitted thanks to the regularising prior (in the sense that its posterior predictive distribution is not worse than the two-epoch or exponential model).
+Despite having many more parameters, the absolute goodness-of-fit does not seem to have improved.
 
 ```{code-cell} ipython3
 plot_posterior_predictive(posterior_walk);
@@ -834,7 +834,7 @@ Overall, it seems like all models but the constant model predict the data reason
 msprime_posterior_predictive(ms_ppc, obs_pi, obs_ld, midpoints);
 ```
 
-## Model comparison and model stacking
+## Model comparison
 
 So far, we have three different and competent models. In Bayesian inference, the prior often regularises the estimates, and therefore fitting a rich model might be a good idea. In this case, it depends on the _a priori_ knowledge. If we have external evidence that the reason for the bottleneck was indeed abrupt (caused by a founder event or a catastrophic event), it will be sub-optimal to use a model that penalises abrupt changes (random walk) or even worse, completely disables it (the exponential model). 
 
