@@ -231,8 +231,71 @@ def test_with_prior_validates_lengths(compiled_model):
     # Correct lengths: 2 epochs → 2 Ne params, 1 boundary.
     m = compiled_model.with_prior([1.0, 2.0], [1.0, 1.0], [4.0], [1.0])
     assert m._prior["mu_log_ne"].shape == (2,)
+    assert m._prior["coupled"] is False
     # Builder is immutable: the receiver is untouched.
     assert compiled_model._prior is None
+
+
+@pytest.mark.slow
+def test_with_prior_random_walk_coupling(compiled_model):
+    m = compiled_model.with_prior(
+        np.log(2000), 1.5, [4.0], [1.0], coupling="random_walk", sigma_step=0.5
+    )
+    assert m._prior["coupled"] is True
+    assert m._prior["mu_log_ne"] == pytest.approx(np.log(2000))
+    assert m._prior["sigma_step"].shape == (1,)  # broadcast scalar -> (n_epochs-1,)
+    assert np.all(m._prior["sigma_step"] == 0.5)
+
+
+@pytest.mark.slow
+def test_with_prior_random_walk_requires_sigma_step(compiled_model):
+    with pytest.raises(ValueError):
+        compiled_model.with_prior(
+            np.log(2000), 1.5, [4.0], [1.0], coupling="random_walk"
+        )
+
+
+@pytest.mark.slow
+def test_with_prior_independent_rejects_sigma_step(compiled_model):
+    with pytest.raises(ValueError):
+        compiled_model.with_prior(
+            [1.0, 2.0], [1.0, 1.0], [4.0], [1.0], sigma_step=0.5
+        )
+
+
+@pytest.mark.slow
+def test_with_prior_unknown_coupling_rejected(compiled_model):
+    with pytest.raises(ValueError):
+        compiled_model.with_prior(
+            [1.0, 2.0], [1.0, 1.0], [4.0], [1.0], coupling="bogus"
+        )
+
+
+@pytest.mark.slow
+def test_prior_stan_data_coupled_mode(compiled_model):
+    m = compiled_model.with_prior(
+        np.log(2000), 1.5, [4.0], [1.0], coupling="random_walk", sigma_step=0.5
+    )
+    sd = m._prior_stan_data()
+    assert sd["coupled"] == 1
+    assert sd["sigma_step"].shape == (1,)
+    assert sd["mu_log_ne"].shape == (2,)
+
+    m_indep = compiled_model.with_prior([1.0, 2.0], [1.0, 1.0], [4.0], [1.0])
+    sd_indep = m_indep._prior_stan_data()
+    assert sd_indep["coupled"] == 0
+
+
+@pytest.mark.slow
+def test_sample_prior_coupled_mode_shapes(compiled_model):
+    m = compiled_model.with_prior(
+        np.log(2000), 1.5, [4.0], [1.0], coupling="random_walk", sigma_step=0.5
+    )
+    idata = m.sample_prior(draws=20, chains=2, seed=0)
+    post = idata.posterior
+    assert post["Ne_values"].sizes["epoch"] == 2
+    assert post["t_boundaries"].sizes["boundary"] == 1
+    assert np.all(np.isfinite(post["Ne_values"].values))
 
 
 @pytest.mark.slow
@@ -336,6 +399,28 @@ def test_sample_simplify_false_retains_full_posterior(compiled_model, data):
     post = idata.posterior
     assert "beta_ld" in post
     assert "t_boundaries" in post
+
+
+@pytest.mark.slow
+def test_sample_with_random_walk_coupling(compiled_model, data):
+    pi, ld = data
+    m = compiled_model.with_prior(
+        np.log(2000), 1.5, [4.0], [1.0], coupling="random_walk", sigma_step=0.5
+    ).with_data(
+        mean_diversity=pi,
+        mean_ld=ld,
+        left_bins=LEFT_BINS,
+        right_bins=RIGHT_BINS,
+        recombination_rate=RECOMBINATION_RATE,
+        mutation_rate=MUTATION_RATE,
+        num_samples=20,
+        sequence_length=SEQUENCE_LENGTH,
+    )
+    idata = m.sample(draws=50, tune=50, chains=1)
+    post = idata.posterior
+    assert post["Ne_values"].sizes["epoch"] == 2
+    assert post["t_boundaries"].sizes["boundary"] == 1
+    assert "log_Ne_indep" not in post  # dropped as a duplicate of log_Ne
 
 
 @pytest.mark.slow

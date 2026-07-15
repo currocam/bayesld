@@ -79,6 +79,9 @@ _DEFAULT_HYPERPRIOR = {
 # So we exclude the GP-surrogate internals variables from the output.
 _SURROGATE_POSTERIOR_VARS = frozenset(
     {
+        # PiecewiseConstant independent-mode raw parameter: an exact duplicate
+        # of "log_Ne" (see piecewise_constant.stan), dropped to avoid noise.
+        "log_Ne_indep",
         "gp_rho",
         "gp_alpha",
         "beta_ld",

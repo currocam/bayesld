@@ -83,10 +83,19 @@ class PiecewiseConstant(_BaseEngine):
         def _fmt(a: npt.ArrayLike) -> str:
             return np.array2string(np.asarray(a), precision=2, floatmode="fixed")
 
-        rows = [
-            ("log Ne  μ", _fmt(p["mu_log_ne"])),
-            ("log Ne  σ", _fmt(p["sigma_log_ne"])),
-        ]
+        if p["coupled"]:
+            rows = [
+                (
+                    "log Ne (ancient)  μ / σ",
+                    f"{p['mu_log_ne']:.2f} / {p['sigma_log_ne']:.2f}",
+                ),
+                ("log-fold step  σ", _fmt(p["sigma_step"])),
+            ]
+        else:
+            rows = [
+                ("log Ne  μ", _fmt(p["mu_log_ne"])),
+                ("log Ne  σ", _fmt(p["sigma_log_ne"])),
+            ]
         if self.num_epochs > 1:
             rows += [
                 ("log t  μ", _fmt(p["mu_log_t"])),
@@ -102,15 +111,34 @@ class PiecewiseConstant(_BaseEngine):
         sigma_log_ne: npt.ArrayLike,
         mu_log_t: npt.ArrayLike,
         sigma_log_t: npt.ArrayLike,
+        *,
+        coupling: str = "independent",
+        sigma_step: npt.ArrayLike | None = None,
     ) -> "PiecewiseConstant":
         """
-        Set the lognormal priors on Ne per epoch and on the epoch boundaries.
+        Set the prior on Ne per epoch and on the epoch boundaries.
+
+        Two ways to couple Ne across epochs:
+        - ``coupling="independent"`` (default): a separate lognormal prior per
+          epoch, ``log Ne_i ~ normal(mu_log_ne[i], sigma_log_ne[i])``.
+        - ``coupling="random_walk"``: a log-space random walk anchored at the
+          most ancient epoch, akin to ``RandomWalk``'s prior:
+          ``log Ne_ancient ~ normal(mu_log_ne, sigma_log_ne)`` and
+          ``log Ne_i = log Ne_{i+1} + normal(0, sigma_step[i])`` walking towards
+          the present (i.e. ``Ne_i ≈ Ne_{i+1} + Normal(0, sigma)`` in log-space).
 
         Arguments:
-        - mu_log_ne: mean of the lognormal prior on Ne per epoch
-        - sigma_log_ne: standard deviation of the lognormal prior on Ne per epoch
+        - mu_log_ne: mean of the lognormal prior on Ne. A length-``num_epochs``
+          vector when ``coupling="independent"``; a scalar (the ancient-epoch
+          anchor) when ``coupling="random_walk"``.
+        - sigma_log_ne: standard deviation, same shape convention as mu_log_ne.
         - mu_log_t: mean of the lognormal prior on the epoch boundaries. For a single epoch, pass an empty array.
         - sigma_log_t: standard deviation of the lognormal prior on the epoch boundaries. For a single epoch, pass an empty array.
+        - coupling: ``"independent"`` or ``"random_walk"``.
+        - sigma_step: sd of the Gaussian log-fold change between adjacent
+          epochs. Required (and only meaningful) when ``coupling="random_walk"``;
+          either a scalar (shared by every step) or a length ``num_epochs-1``
+          vector for a per-step scale.
 
         Returns:
         - a new model with the prior set (the receiver is left unchanged)
@@ -122,31 +150,79 @@ class PiecewiseConstant(_BaseEngine):
         model = PiecewiseConstant(num_epochs=2).with_prior(
             mu_log_ne=np.log([1000, 2000]), sigma_log_ne=np.array([1.5, 1.0]), mu_log_t=np.log([50.0]), sigma_log_t=np.array([1.0])
         )
+        # Random-walk coupling instead:
+        model = PiecewiseConstant(num_epochs=2).with_prior(
+            mu_log_ne=np.log(2000), sigma_log_ne=1.5, mu_log_t=np.log([50.0]), sigma_log_t=np.array([1.0]),
+            coupling="random_walk", sigma_step=0.5,
+        )
         ```
         """
-        mu_log_ne = np.asarray(mu_log_ne, dtype=float)
-        sigma_log_ne = np.asarray(sigma_log_ne, dtype=float)
+        if coupling not in ("independent", "random_walk"):
+            raise ValueError(
+                f"coupling must be 'independent' or 'random_walk'; got {coupling!r}."
+            )
         mu_log_t = np.asarray(mu_log_t, dtype=float)
         sigma_log_t = np.asarray(sigma_log_t, dtype=float)
         n, nb = self.num_epochs, self.num_epochs - 1
-        if mu_log_ne.shape != (n,) or sigma_log_ne.shape != (n,):
-            raise ValueError(
-                f"mu_log_ne and sigma_log_ne must have length num_epochs={n}; "
-                f"got {mu_log_ne.shape} and {sigma_log_ne.shape}."
-            )
         if mu_log_t.shape != (nb,) or sigma_log_t.shape != (nb,):
             raise ValueError(
                 f"mu_log_t and sigma_log_t must have length num_epochs-1={nb}; "
                 f"got {mu_log_t.shape} and {sigma_log_t.shape}."
             )
+
         new = self._clone()
-        new._prior = {
-            "mu_log_ne": mu_log_ne,
-            "sigma_log_ne": sigma_log_ne,
-            "mu_log_t": mu_log_t,
-            "sigma_log_t": sigma_log_t,
-        }
+        if coupling == "random_walk":
+            if sigma_step is None:
+                raise ValueError(
+                    "sigma_step is required when coupling='random_walk'."
+                )
+            anchor_mu = float(np.asarray(mu_log_ne, dtype=float))
+            anchor_sigma = float(np.asarray(sigma_log_ne, dtype=float))
+            if anchor_sigma <= 0:
+                raise ValueError("sigma_log_ne must be positive.")
+            new._prior = {
+                "coupled": True,
+                "mu_log_ne": anchor_mu,
+                "sigma_log_ne": anchor_sigma,
+                "sigma_step": self._broadcast_sigma_step(sigma_step),
+                "mu_log_t": mu_log_t,
+                "sigma_log_t": sigma_log_t,
+            }
+        else:
+            if sigma_step is not None:
+                raise ValueError(
+                    "sigma_step must be None when coupling='independent'."
+                )
+            mu_log_ne = np.asarray(mu_log_ne, dtype=float)
+            sigma_log_ne = np.asarray(sigma_log_ne, dtype=float)
+            if mu_log_ne.shape != (n,) or sigma_log_ne.shape != (n,):
+                raise ValueError(
+                    f"mu_log_ne and sigma_log_ne must have length num_epochs={n}; "
+                    f"got {mu_log_ne.shape} and {sigma_log_ne.shape}."
+                )
+            new._prior = {
+                "coupled": False,
+                "mu_log_ne": mu_log_ne,
+                "sigma_log_ne": sigma_log_ne,
+                "mu_log_t": mu_log_t,
+                "sigma_log_t": sigma_log_t,
+            }
         return new
+
+    def _broadcast_sigma_step(self, sigma_step: npt.ArrayLike) -> np.ndarray:
+        """Coerce a scalar or vector step scale to a positive length-(n-1) array."""
+        nb = self.num_epochs - 1
+        sigma_step = np.asarray(sigma_step, dtype=float)
+        if sigma_step.ndim == 0:
+            sigma_step = np.repeat(sigma_step, nb)
+        if sigma_step.shape != (nb,):
+            raise ValueError(
+                f"sigma_step must be a scalar or a length num_epochs-1={nb} vector; "
+                f"got shape {sigma_step.shape}."
+            )
+        if np.any(sigma_step <= 0):
+            raise ValueError("sigma_step must be positive.")
+        return sigma_step
 
     def _default_prior(self) -> dict:
         """Empirical-Bayes prior: Ne centred on the Watterson estimate pi/(4·mu)."""
@@ -163,6 +239,7 @@ class PiecewiseConstant(_BaseEngine):
                 np.geomspace(_DEFAULT_T_ANCHOR, _DEFAULT_T_ANCHOR * 20.0, nb)
             )
         return {
+            "coupled": False,
             "mu_log_ne": np.full(self.num_epochs, log_ne_mu),
             "sigma_log_ne": np.full(self.num_epochs, _DEFAULT_PRIOR_SIGMA),
             "mu_log_t": log_t,
@@ -171,12 +248,24 @@ class PiecewiseConstant(_BaseEngine):
 
     def _prior_stan_data(self) -> dict:
         assert self._prior is not None
+        p = self._prior
+        n, nb = self.num_epochs, self.num_epochs - 1
+        if p["coupled"]:
+            mu_log_ne = np.full(n, p["mu_log_ne"])
+            sigma_log_ne = np.full(n, p["sigma_log_ne"])
+            sigma_step = p["sigma_step"]
+        else:
+            mu_log_ne = p["mu_log_ne"]
+            sigma_log_ne = p["sigma_log_ne"]
+            sigma_step = np.ones(nb)  # unused when coupled == 0
         return {
-            "n_epochs": self.num_epochs,
-            "mu_log_ne": self._prior["mu_log_ne"],
-            "sigma_log_ne": self._prior["sigma_log_ne"],
-            "mu_log_t": self._prior["mu_log_t"],
-            "sigma_log_t": self._prior["sigma_log_t"],
+            "n_epochs": n,
+            "mu_log_ne": mu_log_ne,
+            "sigma_log_ne": sigma_log_ne,
+            "mu_log_t": p["mu_log_t"],
+            "sigma_log_t": p["sigma_log_t"],
+            "coupled": int(p["coupled"]),
+            "sigma_step": sigma_step,
         }
 
     def sample_prior(
@@ -205,12 +294,23 @@ class PiecewiseConstant(_BaseEngine):
         rng = np.random.default_rng(seed)
         total = draws * chains
         nb = self.num_epochs - 1
+        p = self._prior
 
-        log_ne = rng.normal(
-            self._prior["mu_log_ne"],
-            self._prior["sigma_log_ne"],
-            size=(total, self.num_epochs),
-        )
+        if p["coupled"]:
+            log_ne_a = rng.normal(p["mu_log_ne"], p["sigma_log_ne"], size=total)
+            steps = rng.normal(0.0, p["sigma_step"], size=(total, nb))
+            # log_Ne[i] = log_ne_a + reverse-cumsum of steps from epoch i
+            # (recent) up to the ancient anchor; ancient epoch carries no step.
+            rev_cumsum = np.cumsum(steps[:, ::-1], axis=1)[:, ::-1]
+            log_ne = np.empty((total, self.num_epochs))
+            log_ne[:, -1] = log_ne_a
+            log_ne[:, :-1] = log_ne_a[:, None] + rev_cumsum
+        else:
+            log_ne = rng.normal(
+                p["mu_log_ne"],
+                p["sigma_log_ne"],
+                size=(total, self.num_epochs),
+            )
         ne_values = np.exp(log_ne)
 
         if nb > 0:

@@ -74,6 +74,13 @@ data {
   vector[n_epochs - 1]         mu_log_t;
   vector<lower=0>[n_epochs - 1] sigma_log_t;
 
+  // Dependent (random-walk) Ne prior: when coupled == 1, log_Ne is a
+  // non-centered walk anchored at the ancient epoch (mu_log_ne[n_epochs],
+  // sigma_log_ne[n_epochs]) with per-step innovation sigma_step; otherwise
+  // log_Ne is independent per epoch as above (sigma_step unused).
+  int<lower=0, upper=1> coupled;
+  vector<lower=0>[n_epochs - 1] sigma_step;
+
   #include shared/data_surrogate.stan
 }
 
@@ -82,13 +89,28 @@ transformed data {
 }
 
 parameters {
-  vector<offset=log_ne_offset>[n_epochs] log_Ne;
+  // Independent mode: log_Ne sampled directly. Zero-length when coupled.
+  vector<offset=log_ne_offset>[coupled ? 0 : n_epochs] log_Ne_indep;
+  // Coupled mode: ancient anchor + non-centered steps. Zero-length otherwise.
+  vector<offset=log_ne_offset>[coupled ? 1 : 0] log_ne_anchor;
+  vector[coupled ? n_epochs - 1 : 0]            steps;
+
   ordered[n_epochs - 1] log_t;
 
   #include shared/parameters.stan
 }
 
 transformed parameters {
+  vector[n_epochs] log_Ne;
+  if (coupled) {
+    log_Ne[n_epochs] = log_ne_anchor[1];
+    for (i in 1:n_epochs - 1) {
+      int idx = n_epochs - i;             // n_epochs-1, n_epochs-2, ..., 1
+      log_Ne[idx] = log_Ne[idx + 1] + steps[idx];
+    }
+  } else {
+    log_Ne = log_Ne_indep;
+  }
   vector<lower=0>[n_epochs]     Ne_values    = exp(log_Ne);
   vector<lower=0>[n_epochs - 1] t_boundaries = exp(log_t);
 
@@ -104,8 +126,13 @@ transformed parameters {
 
 model {
   // Demographic priors
-  log_Ne ~ normal(mu_log_ne, sigma_log_ne);
-  log_t  ~ normal(mu_log_t,  sigma_log_t);
+  if (coupled) {
+    log_ne_anchor ~ normal(mu_log_ne[n_epochs], sigma_log_ne[n_epochs]);
+    steps         ~ normal(0, sigma_step);
+  } else {
+    log_Ne_indep  ~ normal(mu_log_ne, sigma_log_ne);
+  }
+  log_t ~ normal(mu_log_t, sigma_log_t);
 
   #include shared/model.stan
 }
