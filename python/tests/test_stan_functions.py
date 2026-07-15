@@ -28,7 +28,7 @@ jax.config.update("jax_enable_x64", True)
 
 cmdstanpy.utils.get_logger().setLevel("ERROR")
 
-STAN_DIR = Path(__file__).parent.parent.parent / "stan" / "tests"
+STAN_DIR = Path(bayesld.__file__).resolve().parent / "stan" / "tests"
 MUTATION_RATE = 1e-8
 SAMPLE_SIZE = 10
 RTOL = 1e-3  # 0.1%
