@@ -141,13 +141,16 @@ def _(combos):
             ax.axhline(1, color="k", lw=0.6, ls="-", alpha=0.5)
             ax.axvline(10_000, color="k", lw=0.6, ls=":", alpha=0.5)
             ax.set_xscale("log")
-            ax.set_yscale("log")
             # Shared scale for haploid and diploid-corrected panels.
             if ploidy_val == 1 or det_name == "corrected":
                 ax.set_xlim(100, 100_000)
-                ax.set_ylim(0.3, 1.1)
+                ax.set_ylim(0.6, 1.1)
+            ax.set_xticks([100, 300, 1_000, 3_000, 10_000, 30_000, 100_000])
             ax.set_xlabel(r"$N_e$")
-            ax.set_ylabel(r"Approximation ratio (closed-form / Monte Carlo)")
+            ax.set_ylabel(
+                r"\begin{tabular}{c}Approximation ratio\\"
+                r"(closed-form / Monte Carlo)\end{tabular}"
+            )
             # ax.set_title(f"{ploidy_name}, {det_name}", fontsize="small")
             ax.legend(fontsize="x-small")
 
