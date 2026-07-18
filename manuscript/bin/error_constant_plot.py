@@ -64,8 +64,8 @@ def _():
                 idx = rng.integers(0, n_rep, size=(BOOTSTRAP_DRAWS, n_rep))
                 ld_mc_boot = np.nanmean(ld_mc[idx], axis=1)  # (B, n_bins)
                 ratio_boot = ld_det / ld_mc_boot
-                ratio_lo[k] = np.nanquantile(ratio_boot, 0.05, axis=0)
-                ratio_hi[k] = np.nanquantile(ratio_boot, 0.95, axis=0)
+                ratio_lo[k] = np.nanquantile(ratio_boot, 0.025, axis=0)
+                ratio_hi[k] = np.nanquantile(ratio_boot, 0.975, axis=0)
             ratios[det_key] = (ratio, ratio_lo, ratio_hi)
 
         combos.append(
@@ -91,7 +91,7 @@ def _():
 def _(combos):
     bin_specs = [
         (0, "C1", r"$u \in [0.5, 1.0]$ cM"),
-        #(4, "C0", r"$u \in [2.5, 3.0]$ cM"),
+        (2, "C0", r"$u \in [1.5, 2.0]$ cM"),
         (9, "C3", r"$u \in [5.0, 5.5]$ cM"),
     ]
     ylabel = (
@@ -128,9 +128,17 @@ def _(combos):
 
     haploid = next(c for c in combos if c["ploidy"] == 1)
     diploid = next(c for c in combos if c["ploidy"] == 2)
+    bins = [b for b, _, _ in bin_specs]
+    bands = np.concatenate(
+        [
+            c["ratios"]["ld_det_inf"][i][:, bins]
+            for c in (haploid, diploid)
+            for i in (1, 2)
+        ]
+    )
 
-    # Combined: left haploid uncorrected, right diploid corrected.
-    fig_combined, axes = plt.subplots(
+    # Combined: left haploid uncorrected, right diploid uncorrected.
+    fig_uncorr, axes = plt.subplots(
         1,
         2,
         figsize=(DOUBLE_COL, SINGLE_COL * 0.75),
@@ -139,29 +147,30 @@ def _(combos):
         constrained_layout=True,
     )
     _plot_combo(axes[0], haploid, "ld_det_inf", legend=True)
-    _plot_combo(axes[1], diploid, "ld_det", legend=False)
+    _plot_combo(axes[1], diploid, "ld_det_inf", legend=False)
     for ax in axes:
         ax.set_xlim(100, 100_000)
-        ax.set_ylim(0.3, 1.3)
+    axes[0].set_ylim(np.nanmin(bands), np.nanmax(bands))
     axes[0].set_title("Haploid", fontsize="small")
-    axes[1].set_title("Diploid (corrected)", fontsize="small")
-    fig_combined.supylabel(ylabel)
+    axes[1].set_title("Diploid", fontsize="small")
+    fig_uncorr.supylabel(ylabel)
 
-    # Diploid uncorrected, single panel.
-    fig_uncorr, ax_uncorr = plt.subplots(
+    # Diploid corrected, single panel.
+    fig_corr, ax_corr = plt.subplots(
         figsize=(SINGLE_COL, SINGLE_COL * 0.75),
         dpi=300,
         constrained_layout=True,
     )
-    _plot_combo(ax_uncorr, diploid, "ld_det_inf", legend=True)
-    ax_uncorr.set_ylabel(ylabel)
+    _plot_combo(ax_corr, diploid, "ld_det", legend=True)
+    ax_corr.set_xlim(100, 100_000)
+    ax_corr.set_ylabel(ylabel)
 
-    figs = [fig_combined, fig_uncorr]
+    figs = [fig_uncorr, fig_corr]
     if mo.app_meta().mode == "script":
-        fig_combined.savefig("error_constant_haploid_diploid.pdf")
-        fig_combined.savefig("error_constant_haploid_diploid.pgf")
-        fig_uncorr.savefig("error_constant_diploid_uncorrected.pdf")
-        fig_uncorr.savefig("error_constant_diploid_uncorrected.pgf")
+        fig_uncorr.savefig("error_constant_uncorrected.pdf")
+        fig_uncorr.savefig("error_constant_uncorrected.pgf")
+        fig_corr.savefig("error_constant_diploid_corrected.pdf")
+        fig_corr.savefig("error_constant_diploid_corrected.pgf")
     figs
     return
 
