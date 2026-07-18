@@ -144,7 +144,7 @@ def _(combos):
             # Shared scale for haploid and diploid-corrected panels.
             if ploidy_val == 1 or det_name == "corrected":
                 ax.set_xlim(100, 100_000)
-                ax.set_ylim(0.6, 1.1)
+                ax.set_ylim(0.5, 1.1)
             ax.set_xticks([100, 300, 1_000, 3_000, 10_000, 30_000, 100_000])
             ax.set_xlabel(r"$N_e$")
             ax.set_ylabel(
