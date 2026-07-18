@@ -142,7 +142,7 @@ def _(combos):
     _plot_combo(axes[1], diploid, "ld_det", legend=False)
     for ax in axes:
         ax.set_xlim(100, 100_000)
-        ax.set_ylim(0.5, 1.1)
+        ax.set_ylim(0.3, 1.3)
     axes[0].set_title("Haploid", fontsize="small")
     axes[1].set_title("Diploid (corrected)", fontsize="small")
     fig_combined.supylabel(ylabel)
