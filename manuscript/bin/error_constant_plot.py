@@ -104,7 +104,13 @@ def _(combos):
         ploidy_combos = [c for c in combos if c["ploidy"] == ploidy_val]
         if not ploidy_combos:
             continue
-        for _det_key, det_name in det_specs:
+        # Haploid finite-sample correction is not implemented; only plot uncorrected.
+        specs = (
+            [("ld_det_inf", "uncorrected")]
+            if ploidy_val == 1
+            else det_specs
+        )
+        for _det_key, det_name in specs:
             fig, ax = plt.subplots(
                 figsize=(SINGLE_COL, SINGLE_COL * 0.75),
                 dpi=300,
@@ -136,8 +142,12 @@ def _(combos):
             ax.axvline(10_000, color="k", lw=0.6, ls=":", alpha=0.5)
             ax.set_xscale("log")
             ax.set_yscale("log")
+            # Shared scale for haploid and diploid-corrected panels.
+            if ploidy_val == 1 or det_name == "corrected":
+                ax.set_xlim(100, 100_000)
+                ax.set_ylim(0.3, 1.1)
             ax.set_xlabel(r"$N_e$")
-            ax.set_ylabel(r"Relative error")
+            ax.set_ylabel(r"Approximation ratio (closed-form / Monte Carlo)")
             # ax.set_title(f"{ploidy_name}, {det_name}", fontsize="small")
             ax.legend(fontsize="x-small")
 
