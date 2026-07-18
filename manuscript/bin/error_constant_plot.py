@@ -91,7 +91,7 @@ def _():
 def _(combos):
     bin_specs = [
         (0, "C1", r"$u \in [0.5, 1.0]$ cM"),
-        (4, "C2", r"$u \in [2.5, 3.0]$ cM"),
+        #(4, "C0", r"$u \in [2.5, 3.0]$ cM"),
         (9, "C3", r"$u \in [5.0, 5.5]$ cM"),
     ]
     ylabel = (
@@ -142,7 +142,7 @@ def _(combos):
     _plot_combo(axes[1], diploid, "ld_det", legend=False)
     for ax in axes:
         ax.set_xlim(100, 100_000)
-        ax.set_ylim(0.6, 1.1)
+        ax.set_ylim(0.5, 1.1)
     axes[0].set_title("Haploid", fontsize="small")
     axes[1].set_title("Diploid (corrected)", fontsize="small")
     fig_combined.supylabel(ylabel)
