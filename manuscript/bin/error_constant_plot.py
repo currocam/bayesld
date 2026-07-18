@@ -89,76 +89,79 @@ def _():
 
 @app.cell
 def _(combos):
-    left_bins = combos[0]["left_bins"]
-    right_bins = combos[0]["right_bins"]
-    bin_indices = [0, 1, 2]  # first three distance bins
-
-    det_specs = [
-        ("ld_det", "corrected"),
-        ("ld_det_inf", "uncorrected"),
+    # Smallest (0.5–1.0 cM) and largest (9.5–10.0 cM) distance bins.
+    bin_specs = [
+        (0, "C1", r"$u \in [0.5, 1.0]$ cM"),
+        (-1, "C0", r"$u \in [9.5, 10.0]$ cM"),
     ]
-    ploidies = [(1, "haploid"), (2, "diploid")]
+    ylabel = (
+        r"\begin{tabular}{c}Approximation ratio\\"
+        r"(closed-form / Monte Carlo)\end{tabular}"
+    )
 
-    figs = []
-    for ploidy_val, ploidy_name in ploidies:
-        ploidy_combos = [c for c in combos if c["ploidy"] == ploidy_val]
-        if not ploidy_combos:
-            continue
-        # Haploid finite-sample correction is not implemented; only plot uncorrected.
-        specs = (
-            [("ld_det_inf", "uncorrected")]
-            if ploidy_val == 1
-            else det_specs
-        )
-        for _det_key, det_name in specs:
-            fig, ax = plt.subplots(
-                figsize=(SINGLE_COL, SINGLE_COL * 0.75),
-                dpi=300,
-                constrained_layout=True,
+    def _plot_combo(ax, combo, det_key, *, legend=True):
+        ratio, ratio_lo, ratio_hi = combo["ratios"][det_key]
+        for b, color, label in bin_specs:
+            ax.plot(
+                combo["Ne"],
+                ratio[:, b],
+                color=color,
+                lw=1.2,
+                marker="o",
+                markersize=1,
+                label=label,
             )
-            for c in ploidy_combos:
-                _ratio, _ratio_lo, _ratio_hi = c["ratios"][_det_key]
-                for j, b in enumerate(bin_indices):
-                    color = f"C{j}"
-                    bin_label = f"u $\\in$ [{left_bins[b]:.2g}, {right_bins[b]:.2g}]"
-                    ax.plot(
-                        c["Ne"],
-                        _ratio[:, b],
-                        color=color,
-                        lw=1.2,
-                        marker="o",
-                        markersize=1,
-                        label=f"{c['label']}, {bin_label}",
-                    )
-                    ax.fill_between(
-                        c["Ne"],
-                        _ratio_lo[:, b],
-                        _ratio_hi[:, b],
-                        color=color,
-                        alpha=0.15,
-                        linewidth=0,
-                    )
-            ax.axhline(1, color="k", lw=0.6, ls="-", alpha=0.5)
-            ax.axvline(10_000, color="k", lw=0.6, ls=":", alpha=0.5)
-            ax.set_xscale("log")
-            # Shared scale for haploid and diploid-corrected panels.
-            if ploidy_val == 1 or det_name == "corrected":
-                ax.set_xlim(100, 100_000)
-                ax.set_ylim(0.5, 1.1)
-            ax.set_xticks([100, 300, 1_000, 3_000, 10_000, 30_000, 100_000])
-            ax.set_xlabel(r"$N_e$")
-            ax.set_ylabel(
-                r"\begin{tabular}{c}Approximation ratio\\"
-                r"(closed-form / Monte Carlo)\end{tabular}"
+            ax.fill_between(
+                combo["Ne"],
+                ratio_lo[:, b],
+                ratio_hi[:, b],
+                color=color,
+                alpha=0.15,
+                linewidth=0,
             )
-            # ax.set_title(f"{ploidy_name}, {det_name}", fontsize="small")
+        ax.axhline(1, color="k", lw=0.6, ls="-", alpha=0.5)
+        ax.axvline(10_000, color="k", lw=0.6, ls=":", alpha=0.5)
+        ax.set_xscale("log")
+        ax.set_xlabel(r"$N_e$")
+        if legend:
             ax.legend(fontsize="x-small")
 
-            if mo.app_meta().mode == "script":
-                stem = f"error_constant_{ploidy_name}_{det_name}"
-                fig.savefig(f"{stem}.pdf")
-                fig.savefig(f"{stem}.pgf")
-            figs.append(fig)
+    haploid = next(c for c in combos if c["ploidy"] == 1)
+    diploid = next(c for c in combos if c["ploidy"] == 2)
+
+    # Combined: left haploid uncorrected, right diploid corrected.
+    fig_combined, axes = plt.subplots(
+        1,
+        2,
+        figsize=(DOUBLE_COL, SINGLE_COL * 0.75),
+        dpi=300,
+        sharey=True,
+        constrained_layout=True,
+    )
+    _plot_combo(axes[0], haploid, "ld_det_inf", legend=True)
+    _plot_combo(axes[1], diploid, "ld_det", legend=False)
+    for ax in axes:
+        ax.set_xlim(100, 100_000)
+        ax.set_ylim(0.6, 1.1)
+    axes[0].set_title("Haploid", fontsize="small")
+    axes[1].set_title("Diploid (corrected)", fontsize="small")
+    fig_combined.supylabel(ylabel)
+
+    # Diploid uncorrected, single panel.
+    fig_uncorr, ax_uncorr = plt.subplots(
+        figsize=(SINGLE_COL, SINGLE_COL * 0.75),
+        dpi=300,
+        constrained_layout=True,
+    )
+    _plot_combo(ax_uncorr, diploid, "ld_det_inf", legend=True)
+    ax_uncorr.set_ylabel(ylabel)
+
+    figs = [fig_combined, fig_uncorr]
+    if mo.app_meta().mode == "script":
+        fig_combined.savefig("error_constant_haploid_diploid.pdf")
+        fig_combined.savefig("error_constant_haploid_diploid.pgf")
+        fig_uncorr.savefig("error_constant_diploid_uncorrected.pdf")
+        fig_uncorr.savefig("error_constant_diploid_uncorrected.pgf")
     figs
     return
 
