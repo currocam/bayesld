@@ -25,6 +25,7 @@ process ERROR_CONSTANT_PLOT {
 
     output:
     path "*.pdf"
+    path "*.pgf"
 
     script:
     def pkl_args = pkls.collect { "--pkl ${it}" }.join(' ')
