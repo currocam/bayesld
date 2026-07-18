@@ -89,10 +89,10 @@ def _():
 
 @app.cell
 def _(combos):
-    # Smallest (0.5–1.0 cM) and largest (9.5–10.0 cM) distance bins.
     bin_specs = [
         (0, "C1", r"$u \in [0.5, 1.0]$ cM"),
-        (-1, "C0", r"$u \in [9.5, 10.0]$ cM"),
+        (4, "C2", r"$u \in [2.5, 3.0]$ cM"),
+        (9, "C3", r"$u \in [5.0, 5.5]$ cM"),
     ]
     ylabel = (
         r"\begin{tabular}{c}Approximation ratio\\"
