@@ -203,7 +203,7 @@ def _(scenario_name, stats):
                 label=_label,
             )
         _ax.axhline(0, color="k", lw=0.5, alpha=0.5)
-        _ax.set_ylim(-_epsilon, _epsilon)
+        _ax.set_ylim(-0.4, 0.4)
         _ax.set_xlabel("PIT")
         _ax.set_title(VAR_LABELS.get(_var, _var))
     _axes[0, 0].set_ylabel(r"$\Delta$ ECDF")
@@ -211,10 +211,10 @@ def _(scenario_name, stats):
     _fig.legend(
         _handles,
         _labels,
-        loc="lower center",
-        bbox_to_anchor=(0.5, -0.02),
+        # "upper center" makes the legend hang *below* the anchor, clearing the xlabels.
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.01),
         ncol=len(_labels),
-        fontsize="small",
     )
     savefig(_fig, f"sbc_{scenario_name}")
     return
