@@ -36,6 +36,12 @@ with app.setup:
     SINGLE_COL = 85 * ONE_MM
     DOUBLE_COL = SINGLE_COL * 2
 
+    # Fixed margins (inches) so axes can be sized exactly and match across figures.
+    MARGIN = {"left": 0.60, "right": 0.08, "bottom": 0.45, "top": 0.25}
+    PANEL_GAP = 0.45
+    # Axes width such that a single-panel figure is exactly one column wide.
+    PANEL_W = SINGLE_COL - MARGIN["left"] - MARGIN["right"]
+
     GROUPS = {
         "approximate": "idatas_no_bias",
         "corrected": "idatas_corrected",
@@ -85,9 +91,26 @@ def posterior_draws(idata, var_name):
 
 
 @app.function
+def panel_figure(ncols, panel_h, panel_w=PANEL_W):
+    """Row of axes with an exact size in inches, so panels match across figures."""
+    fig_w = MARGIN["left"] + ncols * panel_w + (ncols - 1) * PANEL_GAP + MARGIN["right"]
+    fig_h = MARGIN["bottom"] + panel_h + MARGIN["top"]
+    fig, axes = plt.subplots(1, ncols, figsize=(fig_w, fig_h), squeeze=False)
+    fig.set_layout_engine("none")  # autolayout would override the fixed margins
+    fig.subplots_adjust(
+        left=MARGIN["left"] / fig_w,
+        right=1 - MARGIN["right"] / fig_w,
+        bottom=MARGIN["bottom"] / fig_h,
+        top=1 - MARGIN["top"] / fig_h,
+        wspace=PANEL_GAP / panel_w,
+    )
+    return fig, axes
+
+
+@app.function
 def savefig(fig, stem):
     for ext in ("pdf", "pgf"):
-        fig.savefig(f"{stem}.{ext}")
+        fig.savefig(f"{stem}.{ext}", bbox_inches="tight")
 
 
 @app.function
@@ -163,13 +186,7 @@ def _(scenario_name, stats):
     _ecdf = {_label: ecdf_pit_stats(ranks_dataset(_s)) for _label, _s in stats.items()}
     _var_names = list(next(iter(_ecdf.values()))[0].data_vars)
 
-    _fig, _axes = plt.subplots(
-        1,
-        len(_var_names),
-        # Extra width for the outside legend so single-panel plots aren't squished.
-        figsize=(SINGLE_COL * (1.3 * len(_var_names) + 0.6), SINGLE_COL * 0.85),
-        squeeze=False,
-    )
+    _fig, _axes = panel_figure(len(_var_names), PANEL_W * 0.8)
     for _ax, _var in zip(_axes[0], _var_names):
         _epsilon = max(_eps[_var] for _, _, _eps in _ecdf.values())
         # Confidence envelope is identical across groups; draw it once.
@@ -190,8 +207,14 @@ def _(scenario_name, stats):
         _ax.set_xlabel("PIT")
         _ax.set_title(VAR_LABELS.get(_var, _var))
     _axes[0, 0].set_ylabel(r"$\Delta$ ECDF")
-    _axes[0, -1].legend(
-        loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize="small"
+    _handles, _labels = _axes[0, 0].get_legend_handles_labels()
+    _fig.legend(
+        _handles,
+        _labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.02),
+        ncol=len(_labels),
+        fontsize="small",
     )
     savefig(_fig, f"sbc_{scenario_name}")
     return
@@ -235,7 +258,8 @@ def _(scenario_name, stats):
 @app.cell
 def _(scenario_name, stats):
     for _var in next(iter(stats.values())):
-        _fig, _ax = plt.subplots(figsize=(SINGLE_COL, SINGLE_COL))
+        _fig, _axes = panel_figure(1, PANEL_W)
+        _ax = _axes[0, 0]
         _lo, _hi = np.inf, -np.inf
         for _label, _s in stats.items():
             if _label == "approximate":
