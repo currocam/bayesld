@@ -4,7 +4,7 @@ include { CONCEPTUAL_DATA; CONCEPTUAL_PLOTS } from './modules/conceptual'
 include { EXAMPLE_BIAS_DATA; EXAMPLE_BIAS_PLOT } from './modules/example_bias'
 include { ERROR_CONSTANT_DATA; ERROR_CONSTANT_PLOT; ERROR_CONSTANT } from './modules/error_constant'
 include { HOLSTEINFRIESIAN_DATA; VAQUITA_DATA; CAEELE_DATA; ORYSAT_DATA; DROSEC_DATA; STDPOPSIM_PLOTS } from './modules/stdpopsim'
-include { SBC_CONSTANT; SBC_PIECEWISE_CONSTANT; SBC_PIECEWISE_EXPONENTIAL; SBC_PLOT } from './modules/sbc'
+include { SBC_CONSTANT; SBC_PIECEWISE_CONSTANT; SBC_PIECEWISE_EXPONENTIAL; SBC_PLOT; SBC_STATS} from './modules/sbc'
 include { LIZARDS } from './modules/lizards'
 
 params.only = null
@@ -29,12 +29,12 @@ workflow sbc {
     sbc_constant_ch = SBC_CONSTANT()
     sbc_pc_ch = SBC_PIECEWISE_CONSTANT()
     sbc_pe_ch = SBC_PIECEWISE_EXPONENTIAL()
-    SBC_PLOT(
-        sbc_constant_ch.results
-            .mix(sbc_pc_ch.results)
-            .mix(sbc_pe_ch.results)
-            .flatten()
-    )
+    sbc_pkl_ch = sbc_constant_ch.results
+        .mix(sbc_pc_ch.results)
+        .mix(sbc_pe_ch.results)
+        .flatten()
+    SBC_PLOT(sbc_pkl_ch)
+    SBC_STATS(sbc_pkl_ch)
 }
 
 workflow lizards {

@@ -142,10 +142,26 @@ process SBC_PLOT {
     output:
     path "*.{pdf,pgf}"
 
-
     script:
     """
     sbc_plot.py --pkl ${pkl}
+    """
+}
+
+process SBC_STATS {
+    label 'plotting'
+
+    publishDir "${projectDir}/tables/sbc", mode: 'copy'
+
+    input:
+    path pkl
+
+    output:
+    path "*.csv"
+
+    script:
+    """
+    sbc_stats.py --pkl ${pkl}
     """
 }
 
