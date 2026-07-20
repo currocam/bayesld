@@ -2,17 +2,17 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
-#     "arviz-stats==1.2.0",
+#     "arviz-stats==1.1.0",
 #     "marimo",
 #     "matplotlib==3.10.9",
 #     "numpy==2.4.4",
-#     "xarray==2026.4.0",
+#     "xarray==2026.7.0",
 # ]
 # ///
 
 import marimo
 
-__generated_with = "0.23.5"
+__generated_with = "0.23.14"
 app = marimo.App(width="medium")
 
 with app.setup:
@@ -28,6 +28,9 @@ with app.setup:
 
     plt.style.use(Path(__file__).parent / "theme.mplstyle")
     plt.rc("figure", autolayout=True)
+    import matplotlib as pl
+    pl.rcParams['pgf.texsystem'] = "pdflatex"
+
 
     ONE_MM = 1 / 25.4
     SINGLE_COL = 85 * ONE_MM
@@ -52,7 +55,7 @@ with app.setup:
 
 @app.cell
 def _():
-    pkl_path = mo.cli_args().get("pkl", "results/sbc/constant/constant_high.pkl")
+    pkl_path = mo.cli_args().get("pkl", "results/sbc/piecewise_exponential/piecewise_exponential_large.pkl")
     with open(pkl_path, "rb") as f:
         data = pickle.load(f)
 
@@ -79,6 +82,12 @@ def posterior_draws(idata, var_name):
     post = idata.posterior
     name = var_name if var_name in post else POSTERIOR_ALIASES[var_name]
     return post[name].values.flatten()
+
+
+@app.function
+def savefig(fig, stem):
+    for ext in ("pdf", "pgf"):
+        fig.savefig(f"{stem}.{ext}")
 
 
 @app.function
@@ -125,6 +134,7 @@ def ecdf_pit_stats(ranks_ds, envelope_prob=0.99):
     dt_ecdf = distribution.azstats.ecdf(dim=sample_dims, pit=True, npoints=sample_size)
 
     # Simultaneous confidence band as Δ-ECDF (subtract the reference CDF).
+    # I'm not sure why 1000, but it is how it's done in the Arviz source code
     x_ci, _, lower_ci, upper_ci = ecdf_pit(
         np.linspace(0, 1, sample_size), envelope_prob, n_simulations=1000
     )
@@ -183,7 +193,7 @@ def _(scenario_name, stats):
     _axes[0, -1].legend(
         loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize="small"
     )
-    _fig.savefig(f"sbc_{scenario_name}.pdf")
+    savefig(_fig, f"sbc_{scenario_name}")
     return
 
 
@@ -218,7 +228,36 @@ def _(scenario_name, stats):
             _ax_e.set_ylabel("Posterior mean")
             _ax_e.set_title(_title)
 
-        _fig.savefig(f"sbc_zscore_contraction_{scenario_name}_{_label}.pdf")
+        savefig(_fig, f"sbc_zscore_contraction_{scenario_name}_{_label}")
+    return
+
+
+@app.cell
+def _(scenario_name, stats):
+    for _var in next(iter(stats.values())):
+        _fig, _ax = plt.subplots(figsize=(SINGLE_COL, SINGLE_COL))
+        _lo, _hi = np.inf, -np.inf
+        for _label, _s in stats.items():
+            if _label == "approximate":
+                continue
+            _d = _s[_var]
+            _ax.scatter(
+                _d["truth"],
+                _d["estimate"],
+                s=8,
+                color=GROUP_COLORS[_label],
+                #label=_label,
+            )
+            _lo = min(_lo, _d["truth"].min(), _d["estimate"].min())
+            _hi = max(_hi, _d["truth"].max(), _d["estimate"].max())
+        _ax.plot([_lo, _hi], [_lo, _hi], "k--", lw=0.5)
+        _ax.set(
+            xlabel="Ground truth",
+            ylabel="Posterior mean",
+            title=VAR_LABELS.get(_var, _var),
+        )
+        #_ax.legend(fontsize="small")
+        savefig(_fig, f"sbc_ev_{scenario_name}_{_var}")
     return
 
 

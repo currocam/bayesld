@@ -140,7 +140,8 @@ process SBC_PLOT {
     path pkl
 
     output:
-    path "*.pdf"
+    path "*.{pdf,pgf}"
+
 
     script:
     """
