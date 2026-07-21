@@ -463,3 +463,55 @@ def test_active_learning_round_accumulates(data):
     )
     assert len(m2.bias_points) == 4
     assert len(m2.sigma_points) == 2
+
+
+def test_active_learning_round_rejects_unknown_method(data):
+    from bayesld.inference import PiecewiseConstant
+
+    pi, ld = data
+    m = PiecewiseConstant(num_epochs=2).with_data(
+        mean_diversity=pi,
+        mean_ld=ld,
+        left_bins=LEFT_BINS,
+        right_bins=RIGHT_BINS,
+        recombination_rate=RECOMBINATION_RATE,
+        mutation_rate=MUTATION_RATE,
+        num_samples=20,
+        sequence_length=SEQUENCE_LENGTH,
+    )
+    with pytest.raises(ValueError, match="method must be"):
+        m.active_learning_round(
+            num_points=1,
+            rtol=0.3,
+            min_replicates=1,
+            method="hmc",
+        )
+
+
+@pytest.mark.slow
+def test_active_learning_round_nuts_proposes(data):
+    from bayesld.inference import PiecewiseConstant
+
+    pi, ld = data
+    m = PiecewiseConstant(num_epochs=2).with_data(
+        mean_diversity=pi,
+        mean_ld=ld,
+        left_bins=LEFT_BINS,
+        right_bins=RIGHT_BINS,
+        recombination_rate=RECOMBINATION_RATE,
+        mutation_rate=MUTATION_RATE,
+        num_samples=20,
+        sequence_length=SEQUENCE_LENGTH,
+    )
+    m1 = m.active_learning_round(
+        num_points=2,
+        rtol=0.3,
+        min_replicates=3,
+        seed=0,
+        mc_model=msprime.SMCK(k=1),
+        draws=20,
+        tune=20,
+        method="nuts",
+    )
+    assert len(m1.bias_points) == 2
+    assert len(m1.sigma_points) == 2

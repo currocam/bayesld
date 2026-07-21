@@ -8,7 +8,7 @@ import copy
 import logging
 import pathlib
 import time
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 import numpy as np
 import numpy.typing as npt
@@ -666,6 +666,54 @@ class _BaseEngine(abc.ABC):
                 psis_resample=bool(psis_resample),
             )
 
+    def _propose(
+        self,
+        *,
+        method: Literal["pathfinder", "nuts"],
+        draws: int,
+        seed: int,
+        num_workers: int,
+        verbose: bool = False,
+        tune: int = 500,
+        chains: int = 1,
+    ):
+        """Draw posterior proposals for active learning (Pathfinder or NUTS)."""
+        if method == "pathfinder":
+            return self._pathfinder(
+                draws=int(draws),
+                seed=int(seed),
+                num_workers=num_workers,
+                verbose=verbose,
+            )
+        if method == "nuts":
+            kwargs: dict[str, Any] = {
+                "show_console": bool(verbose),
+                "threads_per_chain": int(num_workers),
+                "parallel_chains": int(chains),
+            }
+            # Warm-start chains from Pathfinder, matching ``sample``.
+            pf_seed = int(np.random.default_rng(seed).integers(2**31))
+            pf = self._pathfinder(
+                draws=max(int(draws), int(chains)),
+                seed=pf_seed,
+                num_workers=num_workers,
+                verbose=verbose,
+                psis_resample=True,
+            )
+            kwargs["inits"] = pf.create_inits(chains=int(chains), seed=seed)
+            with _quiet_cmdstanpy(verbose):
+                return self._model.sample(
+                    data=self._stan_data(),
+                    chains=int(chains),
+                    iter_sampling=int(draws),
+                    iter_warmup=int(tune),
+                    seed=int(seed),
+                    **kwargs,
+                )
+        raise ValueError(
+            f"method must be 'pathfinder' or 'nuts'; got {method!r}."
+        )
+
     def active_learning_round(
         self,
         num_points: int,
@@ -677,12 +725,16 @@ class _BaseEngine(abc.ABC):
         draws: int = 1000,
         num_workers: int = 1,
         verbose: bool = False,
+        method: Literal["pathfinder", "nuts"] = "pathfinder",
+        tune: int = 500,
+        chains: int = 1,
     ) -> "_BaseEngine":
         """
         Run a single active-learning round.
-        It consists of (1) proposing points using Pathfinder, (2) evaluating the
-        deterministic-vs-MC LD bias at each point using sim_sufficient_stats, and
-        (3) accumulating the resulting bias/sigma surrogate points.
+        It consists of (1) proposing points from an approximate posterior,
+        (2) evaluating the deterministic-vs-MC LD bias at each point using
+        sim_sufficient_stats, and (3) accumulating the resulting bias/sigma
+        surrogate points.
 
         Arguments:
         - num_points: number of points to propose
@@ -690,35 +742,48 @@ class _BaseEngine(abc.ABC):
         - min_replicates: minimum number of MC replicates
         - seed: random seed
         - mc_model: the MC model to use
-        - draws: number of draws from Pathfinder
+        - draws: number of draws from the proposal method
         - num_workers: number of workers
         - verbose: whether to print progress
+        - method: ``"pathfinder"`` (default) or ``"nuts"`` for proposing points
+        - tune: NUTS warmup iterations (ignored for Pathfinder)
+        - chains: NUTS chains (ignored for Pathfinder)
         Returns:
         - a new model with the round's surrogate points accumulated (the receiver
           is left unchanged)
         """
         if self._data is None:
             raise RuntimeError("Call `.with_data(...)` before active_learning_round.")
+        if method not in ("pathfinder", "nuts"):
+            raise ValueError(
+                f"method must be 'pathfinder' or 'nuts'; got {method!r}."
+            )
 
         rng = np.random.default_rng(seed)
 
-        pf_draws = max(int(draws), int(num_points))
+        n_draws = max(int(draws), int(num_points))
         if verbose:
+            detail = f"{n_draws} draws"
+            if method == "nuts":
+                detail = f"{chains} chain(s) x ({tune} warmup + {n_draws} draws)"
             print(
-                f"[bayesld] active-learning round: Pathfinder ({pf_draws} draws, "
+                f"[bayesld] active-learning round: {method} ({detail}, "
                 f"{num_workers} worker(s))"
             )
         start = time.perf_counter()
-        pf = self._pathfinder(
-            draws=pf_draws,
+        fit = self._propose(
+            method=method,
+            draws=n_draws,
             seed=int(rng.integers(2**31)),
             num_workers=num_workers,
             verbose=verbose,
+            tune=tune,
+            chains=chains,
         )
-        proposals = self._extract_params(pf)
+        proposals = self._extract_params(fit)
         if verbose:
             print(
-                f"[bayesld] Pathfinder done in {time.perf_counter() - start:.1f}s; "
+                f"[bayesld] {method} done in {time.perf_counter() - start:.1f}s; "
                 f"proposing {int(num_points)} point(s)"
             )
 
@@ -1026,7 +1091,7 @@ class _BaseEngine(abc.ABC):
 
     @abc.abstractmethod
     def _extract_params(self, fit) -> list[dict]:
-        """Turn a Pathfinder fit into a list of per-draw proposal params dicts."""
+        """Turn a Pathfinder/NUTS fit into a list of per-draw proposal params dicts."""
 
     @abc.abstractmethod
     def _param_coords(self) -> dict:
