@@ -676,6 +676,7 @@ class _BaseEngine(abc.ABC):
         verbose: bool = False,
         tune: int = 500,
         chains: int = 1,
+        adapt_delta: float | None = None,
     ):
         """Draw posterior proposals for active learning (Pathfinder or NUTS)."""
         if method == "pathfinder":
@@ -691,6 +692,8 @@ class _BaseEngine(abc.ABC):
                 "threads_per_chain": int(num_workers),
                 "parallel_chains": int(chains),
             }
+            if adapt_delta is not None:
+                kwargs["adapt_delta"] = float(adapt_delta)
             # Warm-start chains from Pathfinder, matching ``sample``.
             pf_seed = int(np.random.default_rng(seed).integers(2**31))
             pf = self._pathfinder(
@@ -728,6 +731,7 @@ class _BaseEngine(abc.ABC):
         method: Literal["pathfinder", "nuts"] = "pathfinder",
         tune: int = 500,
         chains: int = 1,
+        adapt_delta: float | None = None,
     ) -> "_BaseEngine":
         """
         Run a single active-learning round.
@@ -748,6 +752,8 @@ class _BaseEngine(abc.ABC):
         - method: ``"pathfinder"`` (default) or ``"nuts"`` for proposing points
         - tune: NUTS warmup iterations (ignored for Pathfinder)
         - chains: NUTS chains (ignored for Pathfinder)
+        - adapt_delta: NUTS target acceptance probability (ignored for Pathfinder;
+          ``None`` keeps the cmdstanpy/Stan default)
         Returns:
         - a new model with the round's surrogate points accumulated (the receiver
           is left unchanged)
@@ -779,6 +785,7 @@ class _BaseEngine(abc.ABC):
             verbose=verbose,
             tune=tune,
             chains=chains,
+            adapt_delta=adapt_delta,
         )
         proposals = self._extract_params(fit)
         if verbose:
