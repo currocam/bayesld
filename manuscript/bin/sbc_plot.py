@@ -149,7 +149,7 @@ def ranks_dataset(stats):
 
 
 @app.function
-def ecdf_pit_stats(ranks_ds, envelope_prob=0.99):
+def ecdf_pit_stats(ranks_ds, envelope_prob=0.95):
     """Δ-ECDF curves and a simultaneous confidence envelope (arviz ``plot_ecdf_pit``)."""
     sample_dims = ["chain", "draw"]
     sample_size = ranks_ds.sizes["draw"]
