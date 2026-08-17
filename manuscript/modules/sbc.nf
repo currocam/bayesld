@@ -144,7 +144,7 @@ process SBC_PLOT {
 
     script:
     """
-    # Trigger rerun
+    # 1
     sbc_plot.py --pkl ${pkl}
     """
 }
