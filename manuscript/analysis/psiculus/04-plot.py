@@ -390,7 +390,7 @@ def _(
 
 
 @app.cell
-def _(gone, hapne, np, phlash):
+def _(gone, hapne, np):
     def demography_from_columns(time_col, ne_col, population_name="pop"):
         """
         time_col: array-like of times ago (generations), increasing, first entry
@@ -416,10 +416,21 @@ def _(gone, hapne, np, phlash):
         return demography
 
 
-    phlash_demo = demography_from_columns(phlash["Generation"], phlash["median"], "phlash")
     gone_demo = demography_from_columns(gone["Generation"], gone["Ne_diploids"], "gone")
     hapne_demo = demography_from_columns(hapne["TIME"], hapne["Q0.5"], "hapne")
-    return demography_from_columns, gone_demo, hapne_demo, phlash_demo
+    return demography_from_columns, gone_demo, hapne_demo
+
+
+@app.cell
+def _(demography_from_columns, np):
+    _phlash = np.load("analysis/psiculus/phlash/phlash_posteriors.npz")
+    phlash_demo = demography_from_columns(
+        _phlash["T"],
+        np.quantile(_phlash["Nes"], 0.5, axis=0),
+        "phlash"
+    )
+
+    return (phlash_demo,)
 
 
 @app.cell
