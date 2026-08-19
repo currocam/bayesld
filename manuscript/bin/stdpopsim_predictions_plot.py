@@ -192,6 +192,7 @@ def _(
             linestyle="--",
             label=r"$\widehat{\mathbb E}_{\mathrm{F}}[X_iX_jY_iY_j]$",
         )
+        ax.set_xlim(x.min(), x.max())
         ax.set_xlabel("Genetic distance (centimorgan)")
         ax.set_ylabel(r"$X_iX_jY_iY_j$")
         ax.set_title("Linkage disequilibrium decay")
@@ -254,6 +255,7 @@ def _(
             linestyle="--",
             label=r"$\widehat{\mathbb E}_{\mathrm{F}}[X_iX_jY_iY_j]$",
         )
+        ax.set_xlim(x.min(), x.max())
         ax.set_xlabel("Genetic distance (centimorgan)")
         ax.set_ylabel(r"$X_iX_jY_iY_j$")
         ax.set_title("Linkage disequilibrium decay")
@@ -371,3 +373,4 @@ def _(Path, plot_constant_species):
 
 if __name__ == "__main__":
     app.run()
+
