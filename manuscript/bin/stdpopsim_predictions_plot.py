@@ -125,11 +125,6 @@ def _(
     right_bins,
     stdpopsim,
 ):
-    def prediction_grid(left, right, n=100):
-        edges = np.linspace(np.min(left), np.max(right), n + 1)
-        pred_left, pred_right = edges[:-1], edges[1:]
-        return pred_left, pred_right, (pred_left + pred_right) / 2
-
     def plot_species(data_path, species_id, model_id, title):
         """Plot demography and LD decay with 90% CI for one species."""
         data = load_data(data_path)
@@ -147,13 +142,11 @@ def _(
         model = species.get_demographic_model(model_id)
         Ne_values, t_boundaries = piecewise_constant_demography(model)
 
-        # Predict at many points, otherwise it looks too "linear"
-        pred_left, pred_right, pred_mid = prediction_grid(left_bins, right_bins)
         _pi_pred, ld_pred = deterministic.expected_piecewise_constant(
             Ne_values=Ne_values,
             t_boundaries=t_boundaries,
-            left_bins=pred_left,
-            right_bins=pred_right,
+            left_bins=left_bins,
+            right_bins=right_bins,
             mutation_rate=mutation_rate,
             sample_size=num_samples,
         )
@@ -185,14 +178,13 @@ def _(
             label=r"$\overline{X_iX_jY_iY_j}$",
         )
         ax.plot(
-            pred_mid * 100,
+            x,
             ld_pred,
             color="C1",
             linewidth=2,
             linestyle="--",
             label=r"$\widehat{\mathbb E}_{\mathrm{F}}[X_iX_jY_iY_j]$",
         )
-        ax.set_xlim(x.min(), x.max())
         ax.set_xlabel("Genetic distance (centimorgan)")
         ax.set_ylabel(r"$X_iX_jY_iY_j$")
         ax.set_title("Linkage disequilibrium decay")
@@ -215,11 +207,10 @@ def _(
 
         ld_matrix = np.array([r["mean_linkage_disequilibrium"] for r in results])
 
-        pred_left, pred_right, pred_mid = prediction_grid(lb, rb)
         _pi_pred, ld_pred = deterministic.expected_constant(
             Ne=Ne,
-            left_bins=pred_left,
-            right_bins=pred_right,
+            left_bins=lb,
+            right_bins=rb,
             mutation_rate=mutation_rate,
             sample_size=num_samples,
         )
@@ -248,14 +239,13 @@ def _(
             label=r"$\overline{X_iX_jY_iY_j}$",
         )
         ax.plot(
-            pred_mid * 100,
+            x,
             ld_pred,
             color="C1",
             linewidth=2,
             linestyle="--",
             label=r"$\widehat{\mathbb E}_{\mathrm{F}}[X_iX_jY_iY_j]$",
         )
-        ax.set_xlim(x.min(), x.max())
         ax.set_xlabel("Genetic distance (centimorgan)")
         ax.set_ylabel(r"$X_iX_jY_iY_j$")
         ax.set_title("Linkage disequilibrium decay")
@@ -373,4 +363,3 @@ def _(Path, plot_constant_species):
 
 if __name__ == "__main__":
     app.run()
-
