@@ -124,7 +124,7 @@ def _(combos):
         ax.set_xscale("log")
         ax.set_xlabel(r"$N_e$")
         if legend:
-            ax.legend(fontsize="x-small")
+          ax.legend(fontsize="x-small")
 
     haploid = next(c for c in combos if c["ploidy"] == 1)
     diploid = next(c for c in combos if c["ploidy"] == 2)
@@ -149,10 +149,11 @@ def _(combos):
     _plot_combo(axes[0], haploid, "ld_det_inf", legend=True)
     _plot_combo(axes[1], diploid, "ld_det_inf", legend=False)
     for ax in axes:
-        ax.set_xlim(100, 100_000)
+        ax.set_xlim(100, 50_000)
     axes[0].set_ylim(np.nanmin(bands), np.nanmax(bands))
-    axes[0].set_title("Haploid", fontsize="small")
-    axes[1].set_title("Diploid", fontsize="small")
+    axes[0].set_title("Haploid")
+    axes[0].set_xlabel(r"$2N_e$")
+    axes[1].set_title("Diploid")
     fig_uncorr.supylabel(ylabel)
 
     # Diploid corrected, single panel.
@@ -162,7 +163,7 @@ def _(combos):
         constrained_layout=True,
     )
     _plot_combo(ax_corr, diploid, "ld_det", legend=True)
-    ax_corr.set_xlim(100, 100_000)
+    ax_corr.set_xlim(100, 50_000)
     ax_corr.set_ylabel(ylabel)
 
     figs = [fig_uncorr, fig_corr]

@@ -18,20 +18,22 @@ Usage:
 import gzip
 import pickle
 import sys
+import time
 
 import msprime
 import numpy as np
 from bayesld import deterministic, linear_bins, montecarlo
 
-# --- parameters ---
-# Mutation rate is set per Ne so the expected number of segregating sites
-# stays ~constant across the grid. Watterson: S = theta * a_n, with
-# theta = 2 * ploidy * Ne * mu * L.
-TARGET_SEG_SITES = 100_000
+
+def log(msg):
+    print(msg, flush=True)
+
+
+MUTATION_RATE = 1e-8
 RANDOM_SEED = 9362178
-NUM_REPLICATES = 100
+RTOL = 0.1
 SMC_PRIME_MODEL = msprime.SMCK(k=1)
-NE_VALUES = np.logspace(np.log10(100), np.log10(100_000), 50)
+NE_VALUES = np.logspace(np.log10(100), np.log10(50_000), 50)
 
 
 def main():
@@ -46,28 +48,20 @@ def main():
 
     left_bins, right_bins = linear_bins()
     sequence_length = right_bins[-1] * 2 / recombination_rate
-    # a_n uses haploid sample size
-    n_hap = num_samples * ploidy
-    a_n = sum(1.0 / i for i in range(1, n_hap))
-    # Match coalescent timescale between haploid and diploid: haploid Ne is
-    # doubled so 2*Ne_hap == Ne_dip in chromosomes.
     ne_values = NE_VALUES * (2 if ploidy == 1 else 1)
 
-    import tqdm
-
     results = []
-    # Process from largest Ne to smallest (cheapest MC first)
     order = np.argsort(ne_values)[::-1]
-    for i in tqdm.tqdm(order, desc="Ne values"):
+    for i in order:
         Ne = ne_values[i]
-        mutation_rate = TARGET_SEG_SITES / (
-            a_n * 2 * ploidy * float(Ne) * sequence_length
-        )
+        tag = f"[Ne={Ne:.0f}]"
+
+        t0 = time.perf_counter()
         pi_det, ld_det = deterministic.expected_constant(
             Ne=float(Ne),
             left_bins=left_bins,
             right_bins=right_bins,
-            mutation_rate=mutation_rate,
+            mutation_rate=MUTATION_RATE,
             sample_size=num_samples,
             ploidy=ploidy,
         )
@@ -75,28 +69,32 @@ def main():
             Ne=float(Ne),
             left_bins=left_bins,
             right_bins=right_bins,
-            mutation_rate=mutation_rate,
+            mutation_rate=MUTATION_RATE,
             sample_size=None,
             ploidy=ploidy,
         )
+        log(f"{tag} det        {time.perf_counter() - t0:7.2f}s")
+
+        t0 = time.perf_counter()
         pi_mc, ld_mc = montecarlo.expected_constant(
             Ne=float(Ne),
             left_bins=left_bins,
             right_bins=right_bins,
-            mutation_rate=mutation_rate,
+            mutation_rate=MUTATION_RATE,
             recombination_rate=recombination_rate,
             sequence_length=sequence_length,
             sample_size=num_samples,
             random_seed=RANDOM_SEED + int(i),
-            num_replicates=NUM_REPLICATES,
+            rtol=RTOL,
             model=SMC_PRIME_MODEL,
             num_workers=num_workers,
             ploidy=ploidy,
         )
+        log(f"{tag} MC         {time.perf_counter() - t0:7.2f}s")
+
         results.append(
             {
                 "Ne": float(Ne),
-                "mutation_rate": mutation_rate,
                 "pi_det": float(pi_det),
                 "ld_det": np.asarray(ld_det),
                 "pi_det_inf": float(pi_det_inf),
@@ -112,21 +110,21 @@ def main():
         "left_bins": left_bins,
         "right_bins": right_bins,
         "params": {
-            "target_seg_sites": TARGET_SEG_SITES,
+            "mutation_rate": MUTATION_RATE,
             "recombination_rate": recombination_rate,
             "sequence_length": sequence_length,
             "num_samples": num_samples,
             "ploidy": ploidy,
-            "a_n": a_n,
-            "num_replicates": NUM_REPLICATES,
+            "rtol": RTOL,
             "model": "SMCK(k=1)",
         },
     }
 
     with gzip.open(out_path, "wb") as f:
         pickle.dump(data, f)
-    print(f"Saved to {out_path}")
+    log(f"Saved to {out_path}")
 
 
 if __name__ == "__main__":
     main()
+
