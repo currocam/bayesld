@@ -62,7 +62,8 @@ def sim_replicates(demo=None, population_size=None):
                 recombination_rate=RECOMBINATION_RATE,
                 population_size=population_size,
                 model=[
-                    msprime.DiscreteTimeWrightFisher(duration=100),
+                    # For consistency with the rest of the analysis
+                    #msprime.DiscreteTimeWrightFisher(duration=100),
                     msprime.StandardCoalescent(),
                 ],
                 random_seed=int(s),

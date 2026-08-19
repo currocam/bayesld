@@ -30,9 +30,9 @@
 %%   
 %%   \ifdefined\pdftexversion\else  % non-pdftex case.
 %%     \usepackage{fontspec}
-%%     \setmainfont{DejaVuSerif.ttf}[Path=\detokenize{/tmp/vsc21003/uv/environments-v2/conceptual-plot-a01930bf0569194c/lib/python3.14/site-packages/matplotlib/mpl-data/fonts/ttf/}]
-%%     \setsansfont{DejaVuSans.ttf}[Path=\detokenize{/tmp/vsc21003/uv/environments-v2/conceptual-plot-a01930bf0569194c/lib/python3.14/site-packages/matplotlib/mpl-data/fonts/ttf/}]
-%%     \setmonofont{DejaVuSansMono.ttf}[Path=\detokenize{/tmp/vsc21003/uv/environments-v2/conceptual-plot-a01930bf0569194c/lib/python3.14/site-packages/matplotlib/mpl-data/fonts/ttf/}]
+%%     \setmainfont{DejaVuSerif.ttf}[Path=\detokenize{/tmp/vsc21003/uv/environments-v2/conceptual-plot-a01930bf0569194c/lib/python3.12/site-packages/matplotlib/mpl-data/fonts/ttf/}]
+%%     \setsansfont{DejaVuSans.ttf}[Path=\detokenize{/tmp/vsc21003/uv/environments-v2/conceptual-plot-a01930bf0569194c/lib/python3.12/site-packages/matplotlib/mpl-data/fonts/ttf/}]
+%%     \setmonofont{DejaVuSansMono.ttf}[Path=\detokenize{/tmp/vsc21003/uv/environments-v2/conceptual-plot-a01930bf0569194c/lib/python3.12/site-packages/matplotlib/mpl-data/fonts/ttf/}]
 %%   \fi
 %%   \makeatletter\@ifpackageloaded{underscore}{}{\usepackage[strings]{underscore}}\makeatother
 %%

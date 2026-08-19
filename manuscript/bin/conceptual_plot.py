@@ -58,6 +58,8 @@ def _():
 
     baseline_div = data["baseline_div"]
     sim_div = data["sim_div"]
+    baseline_afs = data["baseline_afs"]
+    sim_afs = data["sim_afs"]
     baseline_linkage = data["baseline_linkage"]
     sim_linkage = data["sim_linkage"]
     times = data["times"]
@@ -67,10 +69,12 @@ def _():
     ne2 = params["ne2"]
     mutation_rate = params["mutation_rate"]
     return (
+        baseline_afs,
         baseline_linkage,
         mutation_rate,
         ne1,
         ne2,
+        sim_afs,
         sim_div,
         sim_linkage,
         times,
@@ -152,8 +156,8 @@ def _(baseline_div, sim_div, times):
         patch_artist=True,
         widths=0.5,
     )
-    for patch, color in zip(bplot["boxes"], ["C5", "C1"]):
-        patch.set_facecolor(color)
+    for patch, _color in zip(bplot["boxes"], ["C5", "C1"]):
+        patch.set_facecolor(_color)
         patch.set_alpha(0.6)
     for median in bplot["medians"]:
         median.set_color("black")
@@ -311,5 +315,55 @@ def _(baseline_linkage, labelLine, sim_linkage, times):
     return
 
 
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Supplementary: SFS ratio over time
+    """)
+    return
+
+
+@app.cell
+def _(baseline_afs, labelLine, sim_afs, times):
+    fig_sfs, ax_sfs = plt.subplots(
+        figsize=(ONE_HALF_COL, ONE_HALF_COL * 0.75),
+        dpi=300,
+        constrained_layout=True,
+    )
+
+    _sfs_entries = [(1, "Singletons", "C0"), (2, "Doubletons", "C1"), (3, "3-tons", "C2")]
+    for idx, label, _color in _sfs_entries:
+        _vals = sim_afs[:, :, idx] / baseline_afs[:, idx].mean()
+        ax_sfs.errorbar(
+            times,
+            _vals.mean(axis=1),
+            yerr=_vals.std(axis=1),
+            fmt="o",
+            markersize=2.5,
+            label=label,
+            color=_color,
+        )
+
+    (_hoz_line,) = ax_sfs.plot(
+        [times[0], times[-1]], [1, 1], label=r"no change", linestyle="--", color="black"
+    )
+
+    ax_sfs.set_xlabel("Bottleneck start (generations ago)")
+    ax_sfs.set_ylabel(r"$\mathrm{SFS\ entry}\ /\ \mathrm{reference}$")
+    ax_sfs.set_xlim(0, 100)
+    labelLine(_hoz_line, x=times[75], backgroundcolor="white", drop_label=True)
+
+    ax_sfs.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.18),
+        ncol=3,
+    )
+
+    fig_sfs.savefig("conceptual_figure_sfs.pdf")
+    fig_sfs.savefig("conceptual_figure_sfs.pgf")
+    return
+
+
 if __name__ == "__main__":
     app.run()
+
