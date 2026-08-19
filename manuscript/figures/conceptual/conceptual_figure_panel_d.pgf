@@ -362,7 +362,7 @@
 \definecolor{textcolor}{rgb}{0.150000,0.150000,0.150000}%
 \pgfsetstrokecolor{textcolor}%
 \pgfsetfillcolor{textcolor}%
-\pgftext[x=0.271449in,y=2.152517in,,bottom,rotate=90.000000]{\color{textcolor}{\rmfamily\fontsize{14.400000}{17.280000}\selectfont\catcode`\^=\active\def^{\ifmmode\sp\else\^{}\fi}\catcode`\%=\active\def%{\%}Relative change in $\overline{X_iX_jY_iY_j}$}}%
+\pgftext[x=0.271449in,y=2.152517in,,bottom,rotate=90.000000]{\color{textcolor}{\rmfamily\fontsize{14.400000}{17.280000}\selectfont\catcode`\^=\active\def^{\ifmmode\sp\else\^{}\fi}\catcode`\%=\active\def%{\%}$\overline{X_iX_jY_iY_j}\ /\ \mathrm{reference}$}}%
 \end{pgfscope}%
 \begin{pgfscope}%
 \pgfpathrectangle{\pgfqpoint{0.667510in}{0.573610in}}{\pgfqpoint{4.171961in}{3.157813in}}%

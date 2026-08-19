@@ -243,7 +243,7 @@ def _(expected_div, labelLine, sim_div, times):
         color="C0",
     )
     ax_c.set_xlabel("Bottleneck start (generations ago)")
-    ax_c.set_ylabel(r"Relative change in $\overline{\pi}$")
+    ax_c.set_ylabel(r"$\overline{\pi}\ /\ \mathrm{reference}$")
     ax_c.set_xlim(0, 100)
     labelLine(_hoz_line, x=times[-21], backgroundcolor="white")
 
@@ -296,7 +296,7 @@ def _(baseline_linkage, labelLine, sim_linkage, times):
     )
 
     ax_d.set_xlabel("Bottleneck start (generations ago)")
-    ax_d.set_ylabel(r"Relative change in $\overline{X_iX_jY_iY_j}$")
+    ax_d.set_ylabel(r"$\overline{X_iX_jY_iY_j}\ /\ \mathrm{reference}$")
     ax_d.set_xlim(0, 100)
     ax_d.set_yscale("log")
     ax_d.set_yticks([1.0, 1.5, 3, 6, 9])
