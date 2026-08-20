@@ -2,6 +2,7 @@
 # requires-python = ">=3.12"
 # dependencies = [
 #     "arviz==1.1.0",
+#     "arviz-plots==1.1.0",
 #     "bayesld==0.1.0",
 #     "demesdraw==0.4.1",
 #     "marimo",
@@ -385,7 +386,6 @@ def _(
     fig.savefig("results/psiculus/plot.pdf")
     fig.savefig("results/psiculus/plot.pgf")
     fig
-
     return
 
 
@@ -429,7 +429,6 @@ def _(demography_from_columns, np):
         np.quantile(_phlash["Nes"], 0.5, axis=0),
         "phlash"
     )
-
     return (phlash_demo,)
 
 
@@ -513,6 +512,111 @@ def _():
 def _(pd):
     data = pd.read_pickle("analysis/psiculus/PM_data.pkl")
     return (data,)
+
+
+@app.function
+def posterior_demographies(idata, num_samples=50, random_seed=1234):
+    import arviz as az
+    import msprime
+    posterior = az.extract(
+        idata,
+        var_names=["Ne_values", "t_boundaries"],
+        num_samples=num_samples,
+        random_seed=random_seed,
+    )
+    Ne = posterior["Ne_values"].values
+    boundaries = posterior["t_boundaries"].values
+    demographies = []
+    for sample_index in range(Ne.shape[1]):
+        demo = msprime.Demography()
+        demo.add_population(name="pop", initial_size=Ne[0, sample_index])
+        for epoch_index, time in enumerate(boundaries[:, sample_index]):
+            demo.add_population_parameters_change(
+                time=time,
+                initial_size=Ne[epoch_index + 1, sample_index],
+                population="pop",
+            )
+        demo.sort_events()
+        demographies.append(demo)
+    return demographies
+
+
+@app.cell
+def _(DOUBLE_COL, ONE_HALF_COL, data, idata_three, plt, simulate, sns):
+    def plot_ppc(idata, num_samples=50, random_seed=1234):
+        from matplotlib.lines import Line2D
+
+        ld_bins = (0, 4, 12)
+        ppc_color = "C7"
+        # Sample parameters
+        ppc_demographies = posterior_demographies(idata, num_samples=num_samples)
+        simulations = []
+        for i, x in enumerate(ppc_demographies):
+            print(i)
+            while True:
+                try:
+                    simulations.append(simulate(x, random_seed+i))
+                except:
+                    print("error")
+                break
+        fig, axes = plt.subplots(
+            2, 2,
+            figsize=(DOUBLE_COL, ONE_HALF_COL),
+            dpi=300,
+            constrained_layout=True,
+        )
+        ax = axes[0, 0]
+        for sim in simulations:
+            sns.kdeplot(sim[0], ax=ax, color=ppc_color, alpha=0.2, lw=1)
+        sns.kdeplot(
+            idata["observed_data"]["observed_pi"],
+            ax=ax, color="black", lw=1.5,
+        )
+        ax.set_title("Nucleotide diversity")
+        ax.set_xlabel(r"Nucleotide diversity $\pi$")
+        ax.set_ylabel("Density")
+        for ax, bin_index in zip(axes.flat[1:], ld_bins):
+            for sim in simulations:
+                sns.kdeplot(
+                    sim[1][:, bin_index],
+                    ax=ax,
+                    color=ppc_color,
+                    alpha=0.2,
+                    lw=1,
+                )
+            sns.kdeplot(
+                idata["observed_data"]["observed_ld"][:, bin_index],
+                ax=ax,
+                color="black",
+                lw=1.5,
+            )
+            left_cm = data["left_bins_morgan"][bin_index] * 100
+            right_cm = data["right_bins_morgan"][bin_index] * 100
+            ax.set_title(rf"$u \in ({left_cm:.3g}, {right_cm:.3g})$ cM")
+            ax.set_xlabel(r"$\overline{X_iX_jY_iY_j}$")
+            ax.set_ylabel("Density")
+        fig.legend(
+            handles=[
+                Line2D([0], [0], color=ppc_color, lw=2, label="Posterior predictive"),
+                Line2D([0], [0], color="black", lw=2, label="Observed data"),
+            ],
+            loc="outside lower center",
+            ncol=2,
+            frameon=False,
+        )
+        return fig, axes
+
+    ppc_fig, ppc_axes = plot_ppc(idata_three, num_samples=30)
+    ppc_fig.savefig("results/psiculus/ppc.pdf")
+    ppc_fig.savefig("results/psiculus/ppc.pgf")
+    plt.show()
+    return (ppc_fig,)
+
+
+@app.cell
+def _(ppc_fig):
+    ppc_fig
+    return
 
 
 @app.cell
