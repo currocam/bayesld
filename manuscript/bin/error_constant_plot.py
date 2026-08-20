@@ -34,6 +34,46 @@ with app.setup:
     BOOTSTRAP_DRAWS = 500
     BOOTSTRAP_SEED = 0
 
+    def hapne_like_prediction(Ne, ploidy, left_bins, right_bins, sample_size):
+        Ne = np.asarray(Ne, dtype=float) / 2 * ploidy
+        u_1 = np.asarray(left_bins, dtype=float)
+        u_2 = np.asarray(right_bins, dtype=float)
+        d = u_2 - u_1
+
+        ld = (
+            7 * np.log1p(4 * Ne * d / (1 + 4 * Ne * u_1))
+            - 3 * np.log1p(4 * Ne * d / (3 + 4 * Ne * u_1))
+        ) / (16 * Ne * d) - 1 / (2 * (1 + 4 * Ne * u_1) * (1 + 4 * Ne * u_2))
+
+        # Check that we get a close value if we use numerical integration
+        # with the formula from the supp
+        def _smcprime_pointwise(Ne, u):
+            gamma = 1 / (2 * Ne)
+            return (
+                gamma
+                * (3 * gamma**2 + 4 * u**2 + 10 * gamma * u)
+                / ((gamma + 2 * u) ** 2 * (3 * gamma + 2 * u))
+            )
+
+        def _smcprime_binned(Ne, u_1, u_2, n_nodes=200):
+            """(1 / (u_2 - u_1)) int_{u_1}^{u_2} S_1(u) du, by Gauss-Legendre."""
+            x, w = np.polynomial.legendre.leggauss(n_nodes)
+            mid = (u_1 + u_2) / 2
+            half = (u_2 - u_1) / 2
+            u = mid[..., None] + half[..., None] * x
+            ne = Ne[..., None] if np.ndim(Ne) else Ne
+            # (1 / (u_2 - u_1)) * half * sum(w f) = sum(w f) / 2
+            return (_smcprime_pointwise(ne, u) * w).sum(axis=-1) / 2
+
+        assert np.allclose(ld, _smcprime_binned(Ne, u_1, u_2))
+
+        if sample_size is not None and ploidy == 2:
+            n = 2 * sample_size
+            b_n = 1 / (n - 1) ** 2
+            a_n = ((n**2 - n + 2) ** 2) / ((n**2 - 3 * n + 2) ** 2)
+            ld = (a_n - b_n) * ld + 4 * b_n
+        return ld
+
 
 @app.cell
 def _():
@@ -51,14 +91,21 @@ def _():
         ploidy = int(params.get("ploidy", 2))
 
         ratios = {}
-        for det_key in ("ld_det", "ld_det_inf"):
+        for det_key, sample_size in (
+            ("ld_det", params["num_samples"]),
+            ("ld_det_inf", None),
+        ):
             ratio = np.empty((len(d["results"]), len(d["left_bins"])))
             ratio_lo = np.empty_like(ratio)
             ratio_hi = np.empty_like(ratio)
             for k, r in enumerate(d["results"]):
                 ld_mc = np.asarray(r["ld_mc"], dtype=float)  # (n_rep, n_bins)
                 ld_mc = np.where(ld_mc == 0, np.nan, ld_mc)
-                ld_det = np.asarray(r[det_key])
+                # Make a fair comparison against the HapNe-LD predictions. 
+                # so we compare their SMC' form against SMC' simulations. 
+                ld_det = hapne_like_prediction(
+                    r["Ne"], ploidy, d["left_bins"], d["right_bins"], sample_size
+                )
                 ratio[k] = ld_det / np.nanmean(ld_mc, axis=0)
                 n_rep = ld_mc.shape[0]
                 idx = rng.integers(0, n_rep, size=(BOOTSTRAP_DRAWS, n_rep))
