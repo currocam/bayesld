@@ -84,7 +84,7 @@ def main():
         n_points_per_iter=args.n_points_per_iter,
         n_iter=args.n_iter,
         strategy="pathfinder",
-        model=msprime.SMCK(k=1),
+        model=msprime.SMCK(k=0),
         max_tolerance=0.1,
         min_replicates=30,
         seed=SEED,

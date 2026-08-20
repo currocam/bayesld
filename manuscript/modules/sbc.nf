@@ -179,6 +179,7 @@ process SBC_PIECEWISE_CONSTANT_SIMULATE {
 
     script:
     """
+    # Move to SMCK k=0
     ${projectDir}/bin/sbc/piecewise_constant/simulate.py \
         ${experiment.name}_${batch_idx}.pkl \
         --prior-ne1      ${experiment.prior_ne1} \

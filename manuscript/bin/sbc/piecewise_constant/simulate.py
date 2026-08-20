@@ -76,7 +76,7 @@ def main():
             num_replicates=args.num_windows,
             ploidy=2,
             num_workers=NUM_WORKERS,
-            model=msprime.SMCK(k=1),
+            model=msprime.SMCK(k=0),
         )
         datasets.append((np.array(pi), np.array(ld)))
 
