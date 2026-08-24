@@ -6,6 +6,7 @@ include { ERROR_CONSTANT_DATA; ERROR_CONSTANT_PLOT; ERROR_CONSTANT } from './mod
 include { HOLSTEINFRIESIAN_DATA; VAQUITA_DATA; CAEELE_DATA; ORYSAT_DATA; DROSEC_DATA; STDPOPSIM_PLOTS } from './modules/stdpopsim'
 include { SBC_CONSTANT; SBC_PIECEWISE_CONSTANT; SBC_PIECEWISE_EXPONENTIAL; SBC_PLOT; SBC_STATS} from './modules/sbc'
 include { LIZARDS } from './modules/lizards'
+include { BENCHMARK } from './modules/benchmark'
 
 params.only = null
 
@@ -41,6 +42,10 @@ workflow lizards {
     LIZARDS()
 }
 
+workflow benchmark {
+    BENCHMARK()
+}
+
 workflow {
     if (params.only == 'conceptual') {
         conceptual()
@@ -54,6 +59,8 @@ workflow {
         sbc()
     } else if (params.only == 'lizards') {
         lizards()
+    } else if (params.only == 'benchmark') {
+        benchmark()
     } else {
         conceptual()
         example_bias()
@@ -61,5 +68,6 @@ workflow {
         stdpopsim()
         sbc()
         lizards()
+        benchmark()
     }
 }
