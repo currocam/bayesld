@@ -159,14 +159,14 @@ process BENCHMARK_FIT {
     label 'inference'
 
     input:
-    tuple val(name), path(data_pkl), val(fit_script)
+    tuple val(name), val(model), path(data_pkl), val(fit_script)
 
     output:
-    tuple val(name), path("${name}.nc")
+    tuple val(name), val(model), path("${name}_${model}.nc")
 
     script:
     """
-    ${projectDir}/bin/benchmark/${fit_script} ${data_pkl} ${params.benchmark_genome.recombination_rate} ${params.benchmark_genome.mutation_rate} ${task.cpus} ${name}.nc
+    ${projectDir}/bin/benchmark/${fit_script} ${data_pkl} ${params.benchmark_genome.recombination_rate} ${params.benchmark_genome.mutation_rate} ${task.cpus} ${name}_${model}.nc
     """
 }
 
@@ -178,14 +178,15 @@ process BENCHMARK_PLOT {
     publishDir { "${params.benchmark_dir}/${name}" }, mode: 'copy'
 
     input:
-    tuple val(name), path(demes_yaml), path(nc), path(gone_ne), path(hapne_csv)
+    tuple val(name), path(demes_yaml), val(models), path(ncs), path(gone_ne), path(hapne_csv)
 
     output:
-    tuple val(name), path("${name}.pdf"), path("${name}.pgf"), path("${name}.tex")
+    tuple val(name), path("${name}.pdf"), path("${name}.pgf"), path("${name}.tex"), path("${name}_prior.pdf"), path("${name}_prior.pgf")
 
     script:
+    def model_ncs = [models, ncs].transpose().collect { m, nc -> "${m}=${nc}" }.join(' ')
     """
-    ${projectDir}/bin/benchmark/plot.py ${name} ${demes_yaml} ${nc} ${gone_ne} ${hapne_csv} ${name}
+    ${projectDir}/bin/benchmark/plot.py ${name} ${demes_yaml} ${gone_ne} ${hapne_csv} ${name} ${model_ncs}
     """
 }
 
@@ -194,7 +195,14 @@ workflow BENCHMARK {
     def rec_rate_cm_mb = params.benchmark_genome.recombination_rate * 1e8
 
     scenarios = Channel.fromList(params.benchmark_scenarios)
-    fit_scripts = scenarios.map { s -> tuple(s.name, s.fit_script) }
+    // One (name, model, fit_script) tuple per fit_script in the scenario, so
+    // each scenario can be fit against several bayesld models.
+    fit_scripts = scenarios.flatMap { s ->
+        s.fit_scripts.collect { fs ->
+            def model = fs.replaceFirst(/^fit_/, '').replaceFirst(/\.py$/, '')
+            tuple(s.name, model, fs)
+        }
+    }
 
     sim = BENCHMARK_SIMULATE(scenarios.map { s -> tuple(s.name, s.simulate_script) }) // (name, vcf, csi, demes)
 
@@ -230,12 +238,18 @@ workflow BENCHMARK {
 
     // ── bayesld ──
     data_ch = BENCHMARK_BAYESLD_DATA(sim.map { name, vcf, csi, demes -> tuple(name, vcf, csi) })
-    fit_input = data_ch.combine(fit_scripts, by: 0) // (name, data_pkl, fit_script)
-    bayesld_ch = BENCHMARK_FIT(fit_input) // (name, nc)
+    fit_input = data_ch
+        .combine(fit_scripts, by: 0) // (name, data_pkl, model, fit_script)
+        .map { name, data_pkl, model, fit_script -> tuple(name, model, data_pkl, fit_script) }
+    bayesld_ch = BENCHMARK_FIT(fit_input) // (name, model, nc)
+
+    // Regroup the per-model fits back into one (name, [model,...], [nc,...])
+    // tuple per scenario, so the plot overlays every model fit to it.
+    bayesld_grouped = bayesld_ch.groupTuple(by: 0)
 
     // ── join everything back by scenario name for the comparison plot ──
     plot_input = sim.map { name, vcf, csi, demes -> tuple(name, demes) }
-        .combine(bayesld_ch, by: 0)
+        .combine(bayesld_grouped, by: 0)
         .combine(gone_ch.map { name, ne, d2, stats -> tuple(name, ne) }, by: 0)
         .combine(hapne_ch.map { name, csv, png -> tuple(name, csv) }, by: 0)
 
