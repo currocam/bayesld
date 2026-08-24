@@ -4,6 +4,7 @@
 #     "arviz==1.1.0",
 #     "demes==0.2.3",
 #     "matplotlib==3.10.9",
+#     "msprime==1.4.1",
 #     "numpy==2.4.4",
 #     "pandas==3.0.2",
 #     "netcdf4==1.7.4",
@@ -29,6 +30,7 @@ from pathlib import Path
 import arviz as az
 import demes
 import matplotlib.pyplot as plt
+import msprime
 import numpy as np
 import pandas as pd
 
@@ -65,25 +67,9 @@ def ne_quantiles(idata, group="posterior"):
     )
 
 
-def true_step(graph, max_t):
-    deme = graph.demes[0]
-    t = np.arange(0, max_t)
-    ne = np.empty(max_t)
-    for epoch in deme.epochs:
-        mask = (t >= epoch.end_time) & (t < epoch.start_time)
-        ne[mask] = epoch.start_size
-    return t, ne
-
-
-def true_ne_at(graph, generations):
-    deme = graph.demes[0]
-    out = []
-    for g in generations:
-        for epoch in deme.epochs:
-            if epoch.end_time <= g < epoch.start_time:
-                out.append(epoch.start_size)
-                break
-    return np.array(out)
+def true_trajectory(graph, times):
+    dbg = msprime.Demography.from_demes(graph).debug()
+    return dbg.population_size_trajectory(np.asarray(times, dtype=float))[:, 0]
 
 
 def main():
@@ -112,7 +98,8 @@ def main():
         model: ne_quantiles(idata, group="prior") for model, idata in bayesld_idata.items()
     }
 
-    true_t, true_ne = true_step(graph, MAX_GENERATIONS)
+    true_t = np.arange(0, MAX_GENERATIONS)
+    true_ne = true_trajectory(graph, true_t)
 
     fig, ax = plt.subplots(figsize=(6, 4.5), dpi=300)
     ax.plot(true_t, true_ne, color="black", linestyle="--", lw=2, label="Truth")
@@ -164,7 +151,7 @@ def main():
     fig_prior.savefig(f"{out_prefix}_prior.pdf")
     fig_prior.savefig(f"{out_prefix}_prior.pgf")
 
-    true_at = true_ne_at(graph, TABLE_GENERATIONS)
+    true_at = true_trajectory(graph, TABLE_GENERATIONS)
     gone_at = np.interp(TABLE_GENERATIONS, gone["Generation"], gone["Ne_diploids"])
     hapne_at = np.interp(TABLE_GENERATIONS, hapne["TIME"], hapne["Q0.5"])
 
