@@ -70,7 +70,7 @@ def _(pd):
 
         return pd.concat([data, new_rows], ignore_index=True)
     gone = pd.read_csv("analysis/psiculus/gone/psiculus_GONE2_Ne", sep="\t")
-    gone = _extend_up_to(gone, 2000)
+    gone = _extend_up_to(gone, 2500)
     gone
     return (gone,)
 
@@ -87,7 +87,7 @@ def _(pd):
 
         return pd.concat([data, new_rows], ignore_index=True)
     hapne = pd.read_csv("analysis/psiculus/hapne/results/ld_hapne_estimate.csv")
-    hapne = _extend_up_to(hapne, 2000)
+    hapne = _extend_up_to(hapne, 2500)
     return (hapne,)
 
 
@@ -146,7 +146,7 @@ def _(az, np):
         t_b = az.extract(idata, var_names="t_boundaries").values   # (n_bounds, n_draws)
         Ne  = az.extract(idata, var_names="Ne_values").values       # (n_epochs, n_draws)
 
-        t = np.arange(0, 2000)
+        t = np.arange(0, 2500)
         n_draws = Ne.shape[1]
         matrix = np.empty((n_draws, t.size))
 
@@ -170,7 +170,7 @@ def _(idata_three, idata_walk, pred_piecewise):
 @app.cell
 def _(np, pd, three_mat):
     three = pd.DataFrame({
-        "TIME" : np.arange(0, 2000), 
+        "TIME" : np.arange(0, 2500), 
         "Q0.025" : np.quantile(three_mat, 0.025, axis=0),
         "Q0.5" : np.quantile(three_mat, 0.5, axis=0),
         "Q0.975" : np.quantile(three_mat, 0.975, axis=0),
@@ -181,7 +181,7 @@ def _(np, pd, three_mat):
 @app.cell
 def _(np, pd, walk_mat):
     walk = pd.DataFrame({
-        "TIME" : np.arange(0, 2000), 
+        "TIME" : np.arange(0, 2500), 
         "Q0.025" : np.quantile(walk_mat, 0.025, axis=0),
         "Q0.5" : np.quantile(walk_mat, 0.5, axis=0),
         "Q0.975" : np.quantile(walk_mat, 0.975, axis=0),
@@ -192,8 +192,7 @@ def _(np, pd, walk_mat):
 @app.cell
 def _():
     first_breeding = 1972
-    last_born = 2022
-    generations_ago = (2022 - 1972) / 2
+    generations_ago = [(2024 - 6 - first_breeding) / 2, (2024 - 1 - first_breeding) / 2]
     generations_ago
     return (generations_ago,)
 
@@ -259,7 +258,7 @@ def _(
         def series(x, median, lo, hi, color, label, linestyle="-"):
             ax.fill_between(x, lo, hi, color=color, alpha=0.15, linewidth=0)
             ax.plot(x, median, color=color, lw=2, linestyle=linestyle, label=label)
-
+        ax.axvspan(*sorted(generations_ago), color="black", alpha=0.4, lw=0, zorder=0)
         series(three["TIME"], three["Q0.5"], three["Q0.025"], three["Q0.975"],
                COLORS[r"bayesld (3-epoch)"], r"bayesld (3-epoch)")
         series(walk["TIME"], walk["Q0.5"], walk["Q0.025"], walk["Q0.975"],
@@ -271,17 +270,12 @@ def _(
         ax.plot(gone["Generation"], gone["Ne_diploids"], color=COLORS["GONE"], lw=2,
                 linestyle="--", label="GONE")
 
-        ax.set_xlim(1, 2000)
+        ax.set_xlim(1, 2500)
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlabel("Time ago (generations)")
         ax.set_ylabel(r"Effective population size $N_e$")
 
-        ymin, ymax = ax.get_ylim()
-        target_y = 1e4
-        label_frac = (target_y - ymin) / (ymax - ymin)
-        _labeled_vline(ax, generations_ago, ymin, ymax, "Founder event", label_frac)
-        ax.set_ylim(ymin, ymax)
 
 
     def plot_diversity_panel(ax, data, bayesld_three_sims, bayesld_walk_sims, phlash_sims):
