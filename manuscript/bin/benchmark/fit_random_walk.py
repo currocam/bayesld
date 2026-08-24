@@ -44,7 +44,7 @@ def main():
     with open(data_pkl, "rb") as f:
         data = pickle.load(f)
 
-    grid = np.unique(np.round(np.geomspace(1, 1000, num=25)).astype(int))
+    grid = np.round(np.geomspace(1, 1000, num=16)).astype(int)
     dt = np.diff(np.append([0], grid))
     sigma_step = 0.5 * np.sqrt(dt)
 
