@@ -199,7 +199,7 @@ workflow BENCHMARK {
     sim = BENCHMARK_SIMULATE(scenarios.map { s -> tuple(s.name, s.simulate_script) }) // (name, vcf, csi, demes)
 
     // ── GONE2 ──
-    gone2 = GONE2_COMPILE().first()
+    gone2 = GONE2_COMPILE()
 
     gone_vcf_input = sim.map { name, vcf, csi, demes -> tuple(name, vcf, csi, rec_rate_cm_mb, null) }
     gone_vcf_ch = BENCHMARK_GONE2_VCF(gone_vcf_input)
