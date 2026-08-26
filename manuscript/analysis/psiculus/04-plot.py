@@ -460,6 +460,12 @@ def _(gone_demo):
 
 
 @app.cell
+def _(az, idata_three):
+    az.summary(idata_three, var_names = "Ne_values")
+    return
+
+
+@app.cell
 def _(gone_demo, simulate):
     gone_sims = simulate(gone_demo, 3671)
     return (gone_sims,)
