@@ -17,11 +17,12 @@
 
 """Plot bayesld / GONE2 / HapNe-LD Ne(t) estimates against the true demography.
 
-One or more bayesld model fits can be overlaid, each as ``<model>=<path.nc>``.
-
 Usage:
     plot.py <name> <demes.yaml> <gone_ne_file> <hapne_csv> <out_prefix>
             <model1>=<nc1> [<model2>=<nc2> ...]
+
+Writes ``<out_prefix>.{pdf,pgf}`` (posterior, with the competing methods) and
+``<out_prefix>_prior.{pdf,pgf}``.
 """
 
 import sys
@@ -33,19 +34,33 @@ import matplotlib.pyplot as plt
 import msprime
 import numpy as np
 import pandas as pd
+from matplotlib.lines import Line2D
 
-MAX_GENERATIONS = 200
-TABLE_GENERATIONS = [1, 5, 10, 50]
-# C2/C3 are reserved for GONE2/HapNe-LD below, so bayesld models cycle through
-# the rest.
-BAYESLD_COLORS = ["C0", "C1", "C4", "C5", "C6", "C7", "C8", "C9"]
+DEFAULT_GENERATIONS = 200
+# The zigzag keeps changing well beyond the horizon the other scenarios need.
+SCENARIO_GENERATIONS = {"zigzag": 600}
+CI_PROB = 0.95
+# The piecewise trajectories are evaluated on this grid; the change points do not
+# land on integer generations, so a one-generation step visibly rounds them.
+TIME_STEP = 0.05
+N_DRAWS = 30
+DRAW_ALPHA = 0.4
+SEED = 1234
+# I fitted more models, but I think those are the most interesting.
+SCENARIO_MODELS = {
+    "growth": "two_epoch",
+    "decline": "two_epoch",
+    "growth_75": "two_epoch",
+    "decline_75": "two_epoch",
+    "zigzag": "random_walk",
+}
 
 
 def pred_piecewise(idata, max_t, group="posterior"):
     t_b = az.extract(idata, group=group, var_names="t_boundaries").values
     Ne = az.extract(idata, group=group, var_names="Ne_values").values
 
-    t = np.arange(0, max_t)
+    t = np.arange(0, max_t, TIME_STEP)
     n_draws = Ne.shape[1]
     matrix = np.empty((n_draws, t.size))
     matrix[:] = Ne[-1][:, None]
@@ -55,21 +70,29 @@ def pred_piecewise(idata, max_t, group="posterior"):
     return matrix
 
 
-def ne_quantiles(idata, group="posterior"):
-    mat = pred_piecewise(idata, MAX_GENERATIONS, group=group)
-    return pd.DataFrame(
-        {
-            "TIME": np.arange(0, MAX_GENERATIONS),
-            "Q0.025": np.quantile(mat, 0.025, axis=0),
-            "Q0.5": np.quantile(mat, 0.5, axis=0),
-            "Q0.975": np.quantile(mat, 0.975, axis=0),
-        }
-    )
+def ne_ci(mat):
+    tail = (1 - CI_PROB) / 2
+    return np.quantile(mat, [tail, 1 - tail], axis=0)
 
 
 def true_trajectory(graph, times):
     dbg = msprime.Demography.from_demes(graph).debug()
     return dbg.population_size_trajectory(np.asarray(times, dtype=float))[:, 0]
+
+
+def draw_ensemble(ax, t, mat, rng, color="C0"):
+    low, high = ne_ci(mat)
+    ax.fill_between(t, low, high, color=color, alpha=0.2, linewidth=0)
+    draws = mat[rng.choice(mat.shape[0], N_DRAWS, replace=False)]
+    ax.plot(t, draws.T, color=color, lw=0.8, alpha=DRAW_ALPHA)
+
+
+def dress_axis(ax, max_generations):
+    ax.set_xlim(1, max_generations)
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("Time ago (generations)")
+    ax.set_ylabel(r"Effective population size $N_e$")
 
 
 def main():
@@ -82,92 +105,61 @@ def main():
     gone_ne_file = sys.argv[3]
     hapne_csv = sys.argv[4]
     out_prefix = sys.argv[5]
-    bayesld_specs = [arg.split("=", 1) for arg in sys.argv[6:]]
+    specs = [arg.split("=", 1) for arg in sys.argv[6:]]
+    wanted = SCENARIO_MODELS.get(name)
+    if wanted is not None:
+        specs = [spec for spec in specs if spec[0] == wanted]
+    assert len(specs) == 1, f"expected exactly one model for {name!r}, got {specs}"
+    (model, model_nc), = specs
 
     plt.style.use(Path(__file__).parent.parent / "theme.mplstyle")
-    plt.rc("figure", autolayout=True)
     plt.rcParams["pgf.texsystem"] = "pdflatex"
 
     graph = demes.load(demes_yaml)
     gone = pd.read_csv(gone_ne_file, sep="\t")
     hapne = pd.read_csv(hapne_csv)
 
-    bayesld_idata = {model: az.from_netcdf(nc) for model, nc in bayesld_specs}
-    bayesld_q = {model: ne_quantiles(idata) for model, idata in bayesld_idata.items()}
-    bayesld_prior_q = {
-        model: ne_quantiles(idata, group="prior") for model, idata in bayesld_idata.items()
-    }
+    max_generations = SCENARIO_GENERATIONS.get(name, DEFAULT_GENERATIONS)
 
-    true_t = np.arange(0, MAX_GENERATIONS)
+    idata = az.from_netcdf(model_nc)
+    post_mat = pred_piecewise(idata, max_generations)
+    prior_mat = pred_piecewise(idata, max_generations, group="prior")
+    rng = np.random.default_rng(SEED)
+
+    true_t = np.arange(0, max_generations, TIME_STEP)
     true_ne = true_trajectory(graph, true_t)
 
-    fig, ax = plt.subplots(figsize=(6, 4.5), dpi=300)
-    ax.plot(true_t, true_ne, color="black", linestyle="--", lw=2, label="Truth")
+    fig_prior, ax_prior = plt.subplots(figsize=(5, 4), dpi=300)
+    draw_ensemble(ax_prior, true_t, prior_mat, rng)
+    ax_prior.plot(true_t, true_ne, color="black", linestyle="--", lw=2, label="Truth")
+    ax_prior.set_title("Prior")
+    dress_axis(ax_prior, max_generations)
 
-    for (model, q), color in zip(bayesld_q.items(), BAYESLD_COLORS):
-        ax.fill_between(
-            q["TIME"], q["Q0.025"], q["Q0.975"], color=color, alpha=0.15, linewidth=0,
-        )
-        ax.plot(q["TIME"], q["Q0.5"], color=color, lw=2, label=f"bayesld ({model})")
-
-    ax.plot(gone["Generation"], gone["Ne_diploids"], color="C2", lw=2, label="GONE2")
-    ax.plot(hapne["TIME"], hapne["Q0.5"], color="C3", lw=2, label="HapNe-LD")
-    ax.fill_between(
+    fig_post, ax_post = plt.subplots(figsize=(5, 4), dpi=300)
+    draw_ensemble(ax_post, true_t, post_mat, rng)
+    ax_post.plot(gone["Generation"], gone["Ne_diploids"], color="C2", lw=2, label="GONE2")
+    ax_post.plot(hapne["TIME"], hapne["Q0.5"], color="C3", lw=2, label="HapNe-LD")
+    ax_post.fill_between(
         hapne["TIME"], hapne["Q0.025"], hapne["Q0.975"],
         color="C3", alpha=0.15, linewidth=0,
     )
+    ax_post.plot(true_t, true_ne, color="black", linestyle="--", lw=2, label="Truth")
+    ax_post.set_title("Posterior")
+    dress_axis(ax_post, max_generations)
 
-    ax.set_xlim(1, MAX_GENERATIONS)
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    ax.set_xlabel("Time ago (generations)")
-    ax.set_ylabel(r"Effective population size $N_e$")
-    ax.set_title(name)
-    ax.legend()
-
-    fig.savefig(f"{out_prefix}.pdf")
-    fig.savefig(f"{out_prefix}.pgf")
-
-    # Prior vs. truth: GONE2/HapNe-LD have no tweakable prior to sanity-check
-    # against, so this is bayesld-only — it shows whether the prior is broad
-    # enough not to have already baked in the answer.
-    fig_prior, ax_prior = plt.subplots(figsize=(6, 4.5), dpi=300)
-    ax_prior.plot(true_t, true_ne, color="black", linestyle="--", lw=2, label="Truth")
-
-    for (model, q), color in zip(bayesld_prior_q.items(), BAYESLD_COLORS):
-        ax_prior.fill_between(
-            q["TIME"], q["Q0.025"], q["Q0.975"], color=color, alpha=0.15, linewidth=0,
-        )
-        ax_prior.plot(q["TIME"], q["Q0.5"], color=color, lw=2, label=f"bayesld ({model})")
-
-    ax_prior.set_xlim(1, MAX_GENERATIONS)
-    ax_prior.set_xscale("log")
-    ax_prior.set_yscale("log")
-    ax_prior.set_xlabel("Time ago (generations)")
-    ax_prior.set_ylabel(r"Effective population size $N_e$")
-    ax_prior.set_title(f"{name} (prior)")
-    ax_prior.legend()
+    # The draws are too faint to read as a legend swatch, so bayesld gets an
+    # opaque proxy line in both figures.
+    for fig, ax in ((fig_prior, ax_prior), (fig_post, ax_post)):
+        handles, labels = ax.get_legend_handles_labels()
+        handles.insert(0, Line2D([], [], color="C0", lw=1))
+        labels.insert(0, f"bayesld ({model})")
+        fig.legend(handles, labels, loc="outside lower center", ncol=len(labels))
+        fig.suptitle(name)
 
     fig_prior.savefig(f"{out_prefix}_prior.pdf")
     fig_prior.savefig(f"{out_prefix}_prior.pgf")
-
-    true_at = true_trajectory(graph, TABLE_GENERATIONS)
-    gone_at = np.interp(TABLE_GENERATIONS, gone["Generation"], gone["Ne_diploids"])
-    hapne_at = np.interp(TABLE_GENERATIONS, hapne["TIME"], hapne["Q0.5"])
-
-    table = pd.DataFrame(
-        {
-            "Generations ago": TABLE_GENERATIONS,
-            "Truth": true_at,
-            **{
-                f"bayesld ({model})": np.interp(TABLE_GENERATIONS, q["TIME"], q["Q0.5"])
-                for model, q in bayesld_q.items()
-            },
-            "GONE2": gone_at,
-            "HapNe-LD": hapne_at,
-        }
-    )
-    table.to_latex(f"{out_prefix}.tex", index=False, float_format="%.1f")
+    fig_post.savefig(f"{out_prefix}.pdf")
+    fig_post.savefig(f"{out_prefix}.pgf")
 
 
 if __name__ == "__main__":

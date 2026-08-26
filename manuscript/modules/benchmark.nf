@@ -181,7 +181,7 @@ process BENCHMARK_PLOT {
     tuple val(name), path(demes_yaml), val(models), path(ncs), path(gone_ne), path(hapne_csv)
 
     output:
-    tuple val(name), path("${name}.pdf"), path("${name}.pgf"), path("${name}.tex"), path("${name}_prior.pdf"), path("${name}_prior.pgf")
+    tuple val(name), path("${name}.pdf"), path("${name}.pgf"), path("${name}_prior.pdf"), path("${name}_prior.pgf")
 
     script:
     def model_ncs = [models, ncs].transpose().collect { m, nc -> "${m}=${nc}" }.join(' ')
