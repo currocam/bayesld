@@ -186,6 +186,7 @@ process BENCHMARK_PLOT {
     script:
     def model_ncs = [models, ncs].transpose().collect { m, nc -> "${m}=${nc}" }.join(' ')
     """
+    # invalid cache, 4rd
     ${projectDir}/bin/benchmark/plot.py ${name} ${demes_yaml} ${gone_ne} ${hapne_csv} ${name} ${model_ncs}
     """
 }

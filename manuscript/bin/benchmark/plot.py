@@ -43,9 +43,6 @@ CI_PROB = 0.95
 # The piecewise trajectories are evaluated on this grid; the change points do not
 # land on integer generations, so a one-generation step visibly rounds them.
 TIME_STEP = 0.05
-N_DRAWS = 30
-DRAW_ALPHA = 0.4
-SEED = 1234
 # I fitted more models, but I think those are the most interesting.
 SCENARIO_MODELS = {
     "growth": "two_epoch",
@@ -80,11 +77,17 @@ def true_trajectory(graph, times):
     return dbg.population_size_trajectory(np.asarray(times, dtype=float))[:, 0]
 
 
-def draw_ensemble(ax, t, mat, rng, color="C0"):
+def map_index(idata):
+    """Index of the highest-density draw, in the flattened order az.extract uses."""
+    lp = az.extract(idata, group="sample_stats", var_names="lp").values
+    return int(np.argmax(lp))
+
+
+def draw_ensemble(ax, t, mat, color="C1", map_row=None):
     low, high = ne_ci(mat)
     ax.fill_between(t, low, high, color=color, alpha=0.2, linewidth=0)
-    draws = mat[rng.choice(mat.shape[0], N_DRAWS, replace=False)]
-    ax.plot(t, draws.T, color=color, lw=0.8, alpha=DRAW_ALPHA)
+    if map_row is not None:
+        ax.plot(t, mat[map_row], color=color, lw=2)
 
 
 def dress_axis(ax, max_generations):
@@ -124,34 +127,33 @@ def main():
     idata = az.from_netcdf(model_nc)
     post_mat = pred_piecewise(idata, max_generations)
     prior_mat = pred_piecewise(idata, max_generations, group="prior")
-    rng = np.random.default_rng(SEED)
 
     true_t = np.arange(0, max_generations, TIME_STEP)
     true_ne = true_trajectory(graph, true_t)
 
     fig_prior, ax_prior = plt.subplots(figsize=(5, 4), dpi=300)
-    draw_ensemble(ax_prior, true_t, prior_mat, rng)
+    draw_ensemble(ax_prior, true_t, prior_mat)
     ax_prior.plot(true_t, true_ne, color="black", linestyle="--", lw=2, label="Truth")
     ax_prior.set_title("Prior")
     dress_axis(ax_prior, max_generations)
 
     fig_post, ax_post = plt.subplots(figsize=(5, 4), dpi=300)
-    draw_ensemble(ax_post, true_t, post_mat, rng)
+    draw_ensemble(ax_post, true_t, post_mat, map_row=map_index(idata))
     ax_post.plot(gone["Generation"], gone["Ne_diploids"], color="C2", lw=2, label="GONE2")
-    ax_post.plot(hapne["TIME"], hapne["Q0.5"], color="C3", lw=2, label="HapNe-LD")
+    ax_post.plot(hapne["TIME"], hapne["Q0.5"] / 2, color="C3", lw=2, label="HapNe-LD")
     ax_post.fill_between(
-        hapne["TIME"], hapne["Q0.025"], hapne["Q0.975"],
+        hapne["TIME"], hapne["Q0.025"] / 2, hapne["Q0.975"] / 2,
         color="C3", alpha=0.15, linewidth=0,
     )
     ax_post.plot(true_t, true_ne, color="black", linestyle="--", lw=2, label="Truth")
     ax_post.set_title("Posterior")
     dress_axis(ax_post, max_generations)
 
-    # The draws are too faint to read as a legend swatch, so bayesld gets an
-    # opaque proxy line in both figures.
+    # The prior panel has no MAP line of its own, so bayesld gets a proxy line
+    # in both figures for a consistent legend.
     for fig, ax in ((fig_prior, ax_prior), (fig_post, ax_post)):
         handles, labels = ax.get_legend_handles_labels()
-        handles.insert(0, Line2D([], [], color="C0", lw=1))
+        handles.insert(0, Line2D([], [], color="C1", lw=2))
         labels.insert(0, f"bayesld ({model})")
         fig.legend(handles, labels, loc="outside lower center", ncol=len(labels))
         fig.suptitle(name)
