@@ -15,6 +15,7 @@ import numpy as np
 import numpy.typing as npt
 from numpy.typing import NDArray
 
+from ..deterministic import N_QUAD_BINS as _DEFAULT_N_QUAD
 from . import _surrogate as sg
 
 if TYPE_CHECKING:
@@ -67,7 +68,6 @@ class _DatasetVarAdapter:
         return np.asarray(da.transpose("sample", *other).values)
 
 
-_DEFAULT_N_QUAD = 8
 _DEFAULT_HYPERPRIOR = {
     "hsgp_c": 1.5,
     "hsgp_m_ld": 6,

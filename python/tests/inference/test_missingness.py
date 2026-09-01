@@ -235,8 +235,15 @@ def test_log_prob_matches_python_rescale_at_nonzero_missingness(
     sd_miss = m_miss._stan_data()
     params = _fixed_params(sd_none["hsgp_m_ld"], N_BINS)
 
-    lp_none = m_none._model.log_prob(params=params, data=sd_none)["lp__"].iloc[0]
-    lp_miss = m_miss._model.log_prob(params=params, data=sd_miss)["lp__"].iloc[0]
+    # sig_figs=18: lp__ here is O(1e3) while the quantity under test is the O(1e-3)
+    # difference between two evaluations of it — cmdstanpy's default CSV round-trip
+    # precision is nowhere near enough to resolve that difference.
+    lp_none = m_none._model.log_prob(params=params, data=sd_none, sig_figs=18)[
+        "lp__"
+    ].iloc[0]
+    lp_miss = m_miss._model.log_prob(params=params, data=sd_miss, sig_figs=18)[
+        "lp__"
+    ].iloc[0]
 
     # Reconstruct expected_pi / corrected_expected_ld exactly as the Stan
     # transformed parameters block does for this fixed_params point: with

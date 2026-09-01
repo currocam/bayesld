@@ -10,12 +10,16 @@ import numpy as np
 _legendre_x_50, _legendre_w_50 = np.polynomial.legendre.leggauss(50)
 _LEGENDRE_X_50 = jnp.asarray(_legendre_x_50)
 _LEGENDRE_W_50 = jnp.asarray(_legendre_w_50)
-_legendre_x_10, _legendre_w_10 = np.polynomial.legendre.leggauss(10)
-_LEGENDRE_X_10 = jnp.asarray(_legendre_x_10)
-_LEGENDRE_W_10 = jnp.asarray(_legendre_w_10)
+
+# Gauss-Legendre nodes for the per-bin integral over u. `inference._base` imports
+# N_QUAD_BINS so the Stan engines default to the same rule as these functions.
+N_QUAD_BINS = 10
+_legendre_x_bins, _legendre_w_bins = np.polynomial.legendre.leggauss(N_QUAD_BINS)
+_LEGENDRE_X_BINS = jnp.asarray(_legendre_x_bins)
+_LEGENDRE_W_BINS = jnp.asarray(_legendre_w_bins)
 
 
-def gauss(a, b, x=_LEGENDRE_X_10, w=_LEGENDRE_W_10):
+def gauss(a, b, x=_LEGENDRE_X_BINS, w=_LEGENDRE_W_BINS):
     """
     Compute nodes and weights for Gaussian quadrature over [a, b] using Legendre polynomials.
 
@@ -468,60 +472,52 @@ def expected_piecewise_constant(
         expected_tmrca = tmrca_finite + integral_infinite
         return expected_tmrca * 2 * mutation_rate
 
-    # Compute expected LD
+    # Compute expected LD. The time integral has an elementary closed form for
+    # piecewise-constant Ne (unlike piecewise_exponential/carrying_capacity below,
+    # which keep a numerical time quadrature); this mirrors the Stan model's
+    # `S_u_piecewise_constant` exactly rather than approximating the same integral
+    # a second, different way.
     def compute_ld():
-        # Numerical integration using pre-computed Legendre quadrature
         u_points, u_weights = gauss(u_i, u_j)
         u_weights = u_weights / (u_j - u_i)[:, None]
         u_col = u_points.flatten()
 
-        def S_ut_constant(Ne, Gamma_prev, t_prev, t, u):
-            """Survival function for constant Ne epoch."""
-            t = t[:, None]
-            u = u[None, :]
-            Gamma = Gamma_prev + (t - t_prev) / (2 * Ne)
-            return jnp.exp(-2 * t * u - Gamma) / (2 * Ne)
-
-        def ld_step(carry, inputs):
-            total_integral, Gamma_prev, t_prev = carry
-            Ne, t_curr = inputs
-            # Finite interval [t_prev, t_curr]
-            times_finite = (t_curr - t_prev) / 2 * _LEGENDRE_X_50 + (
-                t_curr + t_prev
-            ) / 2
-            f_t_finite = S_ut_constant(Ne, Gamma_prev, t_prev, times_finite, u_col)
-            integral_finite = jnp.sum(
-                f_t_finite * _LEGENDRE_W_50[:, None] * (t_curr - t_prev) / 2, axis=0
+        def log1mexp(x):
+            """log(1 - exp(x)) for x <= 0, stable near x == 0."""
+            return jnp.where(
+                x > -jnp.log(2.0),
+                jnp.log(-jnp.expm1(x)),
+                jnp.log1p(-jnp.exp(x)),
             )
-            # Update accumulators
-            total_integral_new = total_integral + integral_finite
-            Gamma_new = Gamma_prev + (t_curr - t_prev) / (2 * Ne)
-            return (total_integral_new, Gamma_new, t_curr), None
 
-        # Scan over finite epochs
-        init_carry = (
-            jnp.zeros_like(u_col),  # total_integral
-            0.0,  # Gamma_prev
-            0.0,  # t_prev
-        )
-        (integral_finite_acc, Gamma_finite, t_start_last), _ = jax.lax.scan(
-            ld_step, init_carry, (Ne_finite, t_boundaries)
+        def survival_step(carry, inputs):
+            Gamma_prev, t_prev = carry
+            Ne, t_curr = inputs
+            dt = t_curr - t_prev
+            c = 2.0 * u_col + 1.0 / (2.0 * Ne)
+            log_term = (
+                -Gamma_prev
+                - 2.0 * u_col * t_prev
+                + log1mexp(-c * dt)
+                - jnp.log1p(4.0 * Ne * u_col)
+            )
+            Gamma_new = Gamma_prev + dt / (2.0 * Ne)
+            return (Gamma_new, t_curr), log_term
+
+        init_carry = (0.0, 0.0)  # Gamma_prev, t_prev
+        (Gamma_finite, t_start_last), log_terms_finite = jax.lax.scan(
+            survival_step, init_carry, (Ne_finite, t_boundaries)
         )
 
-        # Add contribution from the last infinite epoch [t_start_last, infinity)
-        trans_legendre_x = 0.5 * _LEGENDRE_X_50 + 0.5
-        trans_legendre_w = 0.5 * _LEGENDRE_W_50
-        times_infinite = t_start_last + trans_legendre_x / (1 - trans_legendre_x)
-        f_t_infinite = S_ut_constant(
-            Ne_last, Gamma_finite, t_start_last, times_infinite, u_col
+        # Last, infinite epoch [t_start_last, infinity).
+        log_term_last = (
+            -Gamma_finite
+            - 2.0 * u_col * t_start_last
+            - jnp.log1p(4.0 * Ne_last * u_col)
         )
-        integral_infinite = jnp.sum(
-            f_t_infinite
-            * (trans_legendre_w[:, None] / (1 - trans_legendre_x)[:, None] ** 2),
-            axis=0,
-        )
-        total_integral = integral_finite_acc + integral_infinite
-        res_matrix = total_integral.reshape(u_points.shape)
+        log_terms = jnp.concatenate([log_terms_finite, log_term_last[None, :]], axis=0)
+        survival = jnp.exp(jax.scipy.special.logsumexp(log_terms, axis=0))
+        res_matrix = survival.reshape(u_points.shape)
         return jnp.sum(res_matrix * u_weights, axis=1)
 
     expected_ld = compute_ld()
