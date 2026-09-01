@@ -296,7 +296,8 @@ def data_from_vcf(
             if ploidy == 2:
                 dosage = variant.gt_types.astype(np.int32)
             else:
-                dosage = (variant.gt_types > 0).astype(np.int32)
+                gt = variant.gt_types.astype(np.int32)
+                dosage = np.where(gt == 3, 3, (gt > 0).astype(np.int32))
 
             buffer_geno[chunk_len] = dosage
             buffer_pos[chunk_len] = variant.start  # 0-based
