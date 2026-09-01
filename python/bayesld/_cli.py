@@ -119,6 +119,7 @@ def main():
         "num_pairs_linkage_disequilibrium": result[
             "num_pairs_linkage_disequilibrium"
         ].tolist(),
+        "missingness": result["missingness"].tolist(),
     }
 
     json_str = json.dumps(output, indent=2)

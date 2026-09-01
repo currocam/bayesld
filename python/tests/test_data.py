@@ -63,6 +63,11 @@ def compute_naive_binned_ld(genotypes, positions, left_bins, right_bins):
     """
     Compute naive binned LD for comparison with streaming implementation.
 
+    The mean is weighted by s / N, the fraction of individuals called at both sites —
+    matching StreamingStats' weighting of the running average (and HapNe's
+    get_valid_xy weight). count_ld is the literal number of site pairs visited per
+    bin, independent of that weighting.
+
     Args:
         genotypes: Array of genotypes (n_variants, n_samples)
         positions: Array of variant positions
@@ -73,8 +78,10 @@ def compute_naive_binned_ld(genotypes, positions, left_bins, right_bins):
         Tuple of (avg_ld, count_ld) arrays
     """
     n_genotypes = len(genotypes)
+    n_samples = genotypes.shape[1]
     acc_ld = np.zeros(len(left_bins))
-    count_ld = np.zeros(len(left_bins), dtype=int)
+    weight_sum = np.zeros(len(left_bins))
+    count_ld = np.zeros(len(left_bins))
 
     for i in range(n_genotypes):
         genotypes1 = genotypes[i]
@@ -99,16 +106,21 @@ def compute_naive_binned_ld(genotypes, positions, left_bins, right_bins):
             ld = naive_linkage_disequilibrium(x, y)
             distance = pos_y - pos_x
 
+            # Fraction of individuals called at both sites.
+            s = np.sum((genotypes1 >= 0) & (genotypes1 <= 2) & (genotypes2 >= 0) & (genotypes2 <= 2))
+            weight = s / n_samples
+
             for k_bin in range(len(left_bins)):
                 if left_bins[k_bin] <= distance <= right_bins[k_bin]:
-                    acc_ld[k_bin] += ld
+                    acc_ld[k_bin] += ld * weight
+                    weight_sum[k_bin] += weight
                     count_ld[k_bin] += 1
 
     # Compute average LD
     avg_ld = np.zeros(len(left_bins))
     for k_bin in range(len(left_bins)):
-        if count_ld[k_bin] > 0:
-            avg_ld[k_bin] = acc_ld[k_bin] / count_ld[k_bin]
+        if weight_sum[k_bin] > 0:
+            avg_ld[k_bin] = acc_ld[k_bin] / weight_sum[k_bin]
         else:
             avg_ld[k_bin] = np.nan
 
@@ -286,6 +298,34 @@ def test_msprime():
     )
 
 
+def test_msprime_missingness():
+    """Complete diploid data has no missing genotype calls, so every populated bin's
+    missingness should be (near) zero."""
+    import bayesld
+    import msprime
+
+    n_samples = 50
+    ts = msprime.sim_ancestry(
+        samples=n_samples,
+        population_size=2000,
+        recombination_rate=1e-8,
+        sequence_length=1e7,
+        random_seed=1,
+    )
+    mts = msprime.sim_mutations(ts, rate=1e-8, random_seed=1)
+    left_bins, right_bins = bayesld.linear_bins()
+    data = bayesld.data_from_tree_sequence(
+        mts,
+        left_bins_morgan=left_bins,
+        right_bins_morgan=right_bins,
+        recombination_rate=1e-8,
+    )
+
+    populated = ~np.isnan(data["missingness"])
+    assert populated.any()
+    np.testing.assert_allclose(data["missingness"][populated], 0.0)
+
+
 def test_msprime_haploid():
     import bayesld
     import msprime
@@ -321,3 +361,7 @@ def test_msprime_haploid():
     assert np.isclose(data["mean_genetic_diversity"], mts.diversity(), rtol=1e-3), (
         f"Genetic diversity mismatch: {data['mean_genetic_diversity']} vs {mts.diversity()}"
     )
+    # Complete haploid data has no missing calls either — no ploidy gate anymore.
+    populated = ~np.isnan(data["missingness"])
+    assert populated.any()
+    np.testing.assert_allclose(data["missingness"][populated], 0.0)

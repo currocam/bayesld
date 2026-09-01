@@ -156,6 +156,7 @@ def data_from_tree_sequence(
         "mean_genetic_diversity": mat[0, 0],
         "num_sites_genetic_diversity": mat[0, 1],
         "num_pairs_linkage_disequilibrium": mat[1:, 1],
+        "missingness": mat[1:, 2],
     }
 
 
@@ -328,6 +329,7 @@ def data_from_vcf(
         "mean_genetic_diversity": mat[0, 0],
         "num_sites_genetic_diversity": mat[0, 1],
         "num_pairs_linkage_disequilibrium": mat[1:, 1],
+        "missingness": mat[1:, 2],
     }
 
 

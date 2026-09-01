@@ -8,37 +8,37 @@ use numpy::PyReadonlyArray1;
 use numpy::PyReadonlyArray2;
 use pyo3::prelude::*;
 use std::collections::VecDeque;
+use std::simd::Select;
 use std::simd::f64x8;
 use std::simd::prelude::SimdFloat;
 pub const LANES: usize = 8;
 
 #[derive(Debug, Clone, Copy)]
 pub struct OnlineAverage {
-    count: f64,
+    // Total weight accumulated so far
+    weight: f64,
     mean: f64,
 }
 impl OnlineAverage {
     pub fn new() -> Self {
         Self {
-            count: 0.0,
+            weight: 0.0,
             mean: 0.0,
         }
     }
     /// Update the statistics with a new value
     pub fn update(&mut self, value: f64) {
-        self.count += 1.0;
+        self.weight += 1.0;
         let delta = value - self.mean;
-        self.mean += delta / self.count;
+        self.mean += delta / self.weight;
     }
 
-    /// Update the statistics with a value observed `n_observations` times
-    /// This is useful when you need to account for positions with a certain value
-    /// that were observed multiple times (e.g., zero diversity for unobserved positions)
+    /// Update the statistics with a value observed  weighted by `n_observations`).
     pub fn update_with_count(&mut self, value: f64, n_observations: f64) {
-        let new_count = self.count + n_observations;
+        let new_weight = self.weight + n_observations;
         let delta = value - self.mean;
-        self.mean += delta * (n_observations as f64) / new_count;
-        self.count = new_count;
+        self.mean += delta * (n_observations as f64) / new_weight;
+        self.weight = new_weight;
     }
 }
 
@@ -46,94 +46,106 @@ pub struct SiteStatistics {
     pub genetic_diversity: f64,
     pub minor_allele_frequency: f64,
     pub allele_frequency: f64,
+    pub num_haplotypes: i32,
 }
 
 impl SiteStatistics {
+    fn new(n_ref: i32, n_alt: i32) -> Self {
+        let n_total = n_ref + n_alt;
+
+        if n_total < 2 {
+            return Self {
+                genetic_diversity: 0.0,
+                minor_allele_frequency: 0.0,
+                allele_frequency: 0.0,
+                num_haplotypes: n_total,
+            };
+        }
+
+        let pi = (2.0 * n_ref as f64 * n_alt as f64) / (n_total as f64 * (n_total - 1) as f64);
+        let af = n_alt as f64 / n_total as f64;
+        let maf = (n_ref.min(n_alt) as f64) / (n_total as f64);
+
+        Self {
+            genetic_diversity: pi,
+            minor_allele_frequency: maf,
+            allele_frequency: af,
+            num_haplotypes: n_total,
+        }
+    }
+
     pub fn from_diploid(genotypes: &[i32]) -> Self {
-        assert!(genotypes.iter().all(|&gt| gt >= 0 && gt <= 2));
         let (n_ref, n_alt): (i32, i32) = genotypes
             .iter()
             .filter(|&&gt| gt >= 0 && gt <= 2)
             .fold((0, 0), |(ref_acc, alt_acc), &gt| {
                 (ref_acc + 2 - gt, alt_acc + gt)
             });
-
-        let n_total = n_ref + n_alt;
-
-        if n_total < 2 {
-            return Self {
-                genetic_diversity: 0.0,
-                minor_allele_frequency: 0.0,
-                allele_frequency: 0.0,
-            };
-        }
-
-        let pi = (2.0 * n_ref as f64 * n_alt as f64) / (n_total as f64 * (n_total - 1) as f64);
-        let af = n_alt as f64 / n_total as f64;
-        let maf = (n_ref.min(n_alt) as f64) / (n_total as f64);
-
-        Self {
-            genetic_diversity: pi,
-            minor_allele_frequency: maf,
-            allele_frequency: af,
-        }
+        Self::new(n_ref, n_alt)
     }
+
     pub fn from_haploid(genotypes: &[i32]) -> Self {
-        assert!(genotypes.iter().all(|&gt| gt == 0 || gt == 1));
-        let n_alt: i32 = genotypes.iter().sum();
-        let n_ref: i32 = genotypes.len() as i32 - n_alt;
-        let n_total = n_ref + n_alt;
-        if n_total < 2 {
-            return Self {
-                genetic_diversity: 0.0,
-                minor_allele_frequency: 0.0,
-                allele_frequency: 0.0,
-            };
-        }
-        let pi = (2.0 * n_ref as f64 * n_alt as f64) / (n_total as f64 * (n_total - 1) as f64);
-        let af = n_alt as f64 / n_total as f64;
-        let maf = (n_ref.min(n_alt) as f64) / (n_total as f64);
-        Self {
-            genetic_diversity: pi,
-            minor_allele_frequency: maf,
-            allele_frequency: af,
-        }
+        let (n_ref, n_alt): (i32, i32) = genotypes
+            .iter()
+            .filter(|&&gt| gt == 0 || gt == 1)
+            .fold((0, 0), |(ref_acc, alt_acc), &gt| {
+                (ref_acc + 1 - gt, alt_acc + gt)
+            });
+        Self::new(n_ref, n_alt)
     }
 }
 
 // Measured as E[X_iY_iX_jY_j]
-pub fn linkage_disequilibrium(x: &[f64], y: &[f64]) -> f64 {
+// Returns (ld, s) where `s` is the number of jointly-called individuals (columns) that
+// went into the estimate — callers use it (as s / n_samples) to weight this pair's
+// contribution when combining pairs with different missingness into a bin mean.
+pub fn linkage_disequilibrium(x: &[f64], y: &[f64]) -> (f64, f64) {
     assert_eq!(x.len(), y.len());
-    let s = x.len() as f64;
 
     let chunks = x.len() / LANES;
+
+    let zeros = f64x8::splat(0.0);
+    let ones = f64x8::splat(1.0);
 
     // Process SIMD chunks
     let mut ld_simd = f64x8::splat(0.0);
     let mut ld_square_simd = f64x8::splat(0.0);
+    let mut n_simd = f64x8::splat(0.0);
 
     for i in 0..chunks {
         let offset = i * LANES;
         let x_vec = f64x8::from_slice(&x[offset..offset + LANES]);
         let y_vec = f64x8::from_slice(&y[offset..offset + LANES]);
         let prod = x_vec * y_vec;
+        let missing = prod.is_nan();
+        let prod = missing.select(zeros, prod);
         ld_simd += prod;
         ld_square_simd += prod * prod;
+        n_simd += missing.select(zeros, ones);
     }
 
     // Sum up SIMD lanes
     let mut ld = ld_simd.reduce_sum();
     let mut ld_square = ld_square_simd.reduce_sum();
+    let mut s = n_simd.reduce_sum();
 
     // Process remainder elements
     let remainder_start = chunks * LANES;
     for i in remainder_start..x.len() {
         let prod = x[i] * y[i];
+        if prod.is_nan() {
+            continue;
+        }
         ld += prod;
         ld_square += prod * prod;
+        s += 1.0;
     }
 
-    (ld * ld - ld_square) / (s * (s - 1.0))
+    if s < 2.0 {
+        return (f64::NAN, s);
+    }
+
+    ((ld * ld - ld_square) / (s * (s - 1.0)), s)
 }
 
 pub enum Ploidy {
@@ -142,13 +154,16 @@ pub enum Ploidy {
 }
 
 impl Ploidy {
-    fn are_valid_genotypes(&self, genotypes: &[i32]) -> bool {
-        genotypes.iter().all(|&x| match self {
-            Ploidy::Haploid => x == 0 || x == 1,
-            Ploidy::Diploid => x == 0 || x == 1 || x == 2,
-        })
+    fn max_dosage(&self) -> i32 {
+        match self {
+            Ploidy::Haploid => 1,
+            Ploidy::Diploid => 2,
+        }
     }
-    // Standardize genotypes assuming Hardy-Weinberg equilibrium
+    pub fn is_missing(&self, genotype: i32) -> bool {
+        genotype < 0 || genotype > self.max_dosage()
+    }
+    // Standardize genotypes assuming binomial distribution
     pub fn standardize(&self, genotypes: &[i32], allele_frequency: f64) -> Vec<f64> {
         let mean = match self {
             Ploidy::Haploid => allele_frequency,
@@ -160,7 +175,13 @@ impl Ploidy {
         };
         genotypes
             .iter()
-            .map(|&x| ((x as f64) - mean) / std_dev)
+            .map(|&x| {
+                if self.is_missing(x) {
+                    f64::NAN
+                } else {
+                    ((x as f64) - mean) / std_dev
+                }
+            })
             .collect()
     }
 }
@@ -244,6 +265,10 @@ pub struct StreamingStats {
     maf_threshold: f64,
     genetic_diversity: OnlineAverage,
     linkage_disequilibrium: Vec<OnlineAverage>,
+    // Number of site pairs actually visited
+    ld_pair_count: Vec<f64>,
+    // Mean fraction of individuals missing per pair, one value per bin.
+    missingness: Vec<OnlineAverage>,
     ploidy: Ploidy,
 }
 
@@ -265,6 +290,8 @@ impl StreamingStats {
             maf_threshold,
             genetic_diversity: OnlineAverage::new(),
             linkage_disequilibrium: vec![OnlineAverage::new(); n],
+            ld_pair_count: vec![0.0; n],
+            missingness: vec![OnlineAverage::new(); n],
             ploidy,
         }
     }
@@ -359,8 +386,15 @@ impl StreamingStats {
             if distance >= self.left_bins[bin_index] {
                 let gt1 = self.window.get_genotypes(0);
                 let gt2 = self.window.get_genotypes(i);
-                let ld = linkage_disequilibrium(gt1, gt2);
-                self.linkage_disequilibrium[bin_index].update(ld);
+                let (ld, s) = linkage_disequilibrium(gt1, gt2);
+                if ld.is_finite() {
+                    assert!(s.is_finite() && s >= 2.0);
+                    // Same weighting scheme as in HapNe
+                    let weight = s / self.window.n_samples as f64;
+                    self.linkage_disequilibrium[bin_index].update_with_count(ld, weight);
+                    self.ld_pair_count[bin_index] += 1.0;
+                    self.missingness[bin_index].update(1.0 - weight);
+                }
             }
         }
 
@@ -388,13 +422,8 @@ impl StreamingStats {
         let n_sites = shape[0] as u64;
         for i in 0..shape[0] {
             let position = positions[i];
-            // We don't check for NaN here, we trust the python caller to have already
-            // filtered out NaN positions. We panic inside add_site otherwise.
             let genotypes: Vec<i32> = genotypes.row(i).to_vec();
-
-            if self.ploidy.are_valid_genotypes(&genotypes) {
-                self.add_site(position, &genotypes)
-            }
+            self.add_site(position, &genotypes);
         }
 
         // VCF do not normally contain HOMREF but we need to account for them!
@@ -420,15 +449,24 @@ impl StreamingStats {
             self.process_and_pop_front(max_bin, min_bin);
         }
 
-        let mut mean = vec![0.0; self.linkage_disequilibrium.len() + 1];
-        let mut count = vec![0.0; self.linkage_disequilibrium.len() + 1];
+        let reported_mean = |avg: &OnlineAverage| {
+            if avg.weight > 0.0 { avg.mean } else { f64::NAN }
+        };
+
+        let n = self.linkage_disequilibrium.len() + 1;
+        let mut mean = vec![0.0; n];
+        let mut count = vec![0.0; n];
+        let mut missingness = vec![f64::NAN; n];
         mean[0] = self.genetic_diversity.mean;
-        count[0] = self.genetic_diversity.count as f64;
+        count[0] = self.genetic_diversity.weight as f64;
         for i in 0..self.linkage_disequilibrium.len() {
             mean[i + 1] = self.linkage_disequilibrium[i].mean;
-            count[i + 1] = self.linkage_disequilibrium[i].count as f64;
+            count[i + 1] = self.ld_pair_count[i];
+            missingness[i + 1] = reported_mean(&self.missingness[i]);
         }
-        let matrix: Vec<Vec<f64>> = (0..mean.len()).map(|i| vec![mean[i], count[i]]).collect();
+        let matrix: Vec<Vec<f64>> = (0..n)
+            .map(|i| vec![mean[i], count[i], missingness[i]])
+            .collect();
         Ok(PyArray2::from_vec2(py, &matrix)?)
     }
 }
@@ -545,7 +583,7 @@ mod tests {
         avg.update(20.0);
         avg.update(30.0);
         assert_eq!(avg.mean, 20.0);
-        assert_eq!(avg.count, 3.0);
+        assert_eq!(avg.weight, 3.0);
 
         // Test update_with_count
         let mut avg2 = OnlineAverage::new();
@@ -553,7 +591,7 @@ mod tests {
         avg2.update_with_count(10.0, 2.0); // Two observations of 10.0
         // Expected: (5*3 + 10*2) / 5 = 35 / 5 = 7.0
         assert_eq!(avg2.mean, 35.0 / 5.0);
-        assert_eq!(avg2.count, 5.0);
+        assert_eq!(avg2.weight, 5.0);
 
         // Test accounting for unobserved positions (zero diversity)
         let genotypes = Ploidy::Diploid.randn(200);
@@ -571,7 +609,7 @@ mod tests {
         avg3_unobserved.update_with_count(0.0, n_unobserved as f64);
 
         assert!((avg3_unobserved.mean - avg3.mean).abs() < 1e-6);
-        assert_eq!(avg3_unobserved.count, avg3.count);
+        assert_eq!(avg3_unobserved.weight, avg3.weight);
     }
 
     #[test]
@@ -638,29 +676,76 @@ mod tests {
         // Case 1: [0, 0, 0], [0, 0, 0]
         let genotypes1 = vec![0.0, 0.0, 0.0];
         let genotypes2 = vec![0.0, 0.0, 0.0];
-        let stats = linkage_disequilibrium(&genotypes1, &genotypes2);
+        let (stats, s) = linkage_disequilibrium(&genotypes1, &genotypes2);
         assert_eq!(stats, 0.0);
+        assert_eq!(s, 3.0);
         // Case 2: [1, 1, 1], [1, 1, 1]
         let genotypes1 = vec![1.0, 1.0, 1.0];
         let genotypes2 = vec![1.0, 1.0, 1.0];
-        let stats = linkage_disequilibrium(&genotypes1, &genotypes2);
+        let (stats, s) = linkage_disequilibrium(&genotypes1, &genotypes2);
         assert_eq!(stats, 1.0);
+        assert_eq!(s, 3.0);
         // Case 3: [1, 1, 1], [-1, -1, 1]
         let genotypes1 = vec![1.0, 1.0, 1.0];
         let genotypes2 = vec![1.0, 1.0, 1.0];
-        let stats = linkage_disequilibrium(&genotypes1, &genotypes2);
+        let (stats, s) = linkage_disequilibrium(&genotypes1, &genotypes2);
         assert_eq!(stats, 1.0);
+        assert_eq!(s, 3.0);
         // Case 4: [0, 1, 1], [1, 0, 1]
         let genotypes1 = vec![0.0, 1.0, 1.0];
         let genotypes2 = vec![1.0, 0.0, 1.0];
-        let stats = linkage_disequilibrium(&genotypes1, &genotypes2);
+        let (stats, s) = linkage_disequilibrium(&genotypes1, &genotypes2);
         assert_eq!(stats, 0.0);
+        assert_eq!(s, 3.0);
         // Case 5: [1, 1, 1], [1, 0, 1]
         let genotypes1 = vec![1.0, 1.0, 1.0];
         let genotypes2 = vec![1.0, 0.0, 1.0];
-        let stats = linkage_disequilibrium(&genotypes1, &genotypes2);
+        let (stats, s) = linkage_disequilibrium(&genotypes1, &genotypes2);
         assert!((stats - 1.0 / 3.0).abs() < 1e-10);
+        assert_eq!(s, 3.0);
     }
+    #[test]
+    fn test_linkage_disequilibrium_skips_missing_comparisons() {
+        let genotypes_x = vec![0, 1, 2];
+        let genotypes_y = vec![3, 0, 1];
+
+        let stats_x = SiteStatistics::from_diploid(&genotypes_x);
+        let stats_y = SiteStatistics::from_diploid(&genotypes_y);
+        // p_x = 0.5 (from [0, 1, 2]); p_y = 0.25 (from non-missing calls [0, 1]).
+        assert!((stats_x.allele_frequency - 0.5).abs() < 1e-10);
+        assert!((stats_y.allele_frequency - 0.25).abs() < 1e-10);
+        assert_eq!(stats_x.num_haplotypes, 6);
+        assert_eq!(stats_y.num_haplotypes, 4);
+
+        let standardized_x = Ploidy::Diploid.standardize(&genotypes_x, stats_x.allele_frequency);
+        let standardized_y = Ploidy::Diploid.standardize(&genotypes_y, stats_y.allele_frequency);
+
+        let (ld, s) = linkage_disequilibrium(&standardized_x, &standardized_y);
+        assert_eq!(s, 2.0);
+
+        // Expected value using only samples 1 and 2 (sample 0 is missing in y).
+        let mean_x = 2.0 * stats_x.allele_frequency;
+        let std_x = (2.0 * stats_x.allele_frequency * (1.0 - stats_x.allele_frequency)).sqrt();
+        let mean_y = 2.0 * stats_y.allele_frequency;
+        let std_y = (2.0 * stats_y.allele_frequency * (1.0 - stats_y.allele_frequency)).sqrt();
+        let x_std = [
+            (genotypes_x[1] as f64 - mean_x) / std_x,
+            (genotypes_x[2] as f64 - mean_x) / std_x,
+        ];
+        let y_std = [
+            (genotypes_y[1] as f64 - mean_y) / std_y,
+            (genotypes_y[2] as f64 - mean_y) / std_y,
+        ];
+        let z = [x_std[0] * y_std[0], x_std[1] * y_std[1]];
+        let m = 2.0;
+        let expected = (z.iter().sum::<f64>().powi(2) - z.iter().map(|zi| zi * zi).sum::<f64>())
+            / (m * (m - 1.0));
+        assert!(
+            (ld - expected).abs() < 1e-10,
+            "expected {expected}, got {ld}"
+        );
+    }
+
     // Naive implementation of linkage disequilibrium
     fn naive_linkage_disequilibrium(genotypes1: &[f64], genotypes2: &[f64]) -> f64 {
         let n = genotypes1.len();
@@ -687,7 +772,7 @@ mod tests {
             let stats2 = SiteStatistics::from_diploid(&genotypes2);
             let normalized1 = Ploidy::Diploid.standardize(&genotypes1, stats1.allele_frequency);
             let normalized2 = Ploidy::Diploid.standardize(&genotypes2, stats2.allele_frequency);
-            let ld = linkage_disequilibrium(&normalized1, &normalized2);
+            let (ld, _) = linkage_disequilibrium(&normalized1, &normalized2);
             let naive_ld = naive_linkage_disequilibrium(&normalized1, &normalized2);
             assert!((ld - naive_ld).abs() < 1e-10 || (ld.is_nan() && naive_ld.is_nan()));
         }
@@ -701,7 +786,7 @@ mod tests {
             let stats2 = SiteStatistics::from_haploid(&genotypes2);
             let normalized1 = Ploidy::Haploid.standardize(&genotypes1, stats1.allele_frequency);
             let normalized2 = Ploidy::Haploid.standardize(&genotypes2, stats2.allele_frequency);
-            let ld = linkage_disequilibrium(&normalized1, &normalized2);
+            let (ld, _) = linkage_disequilibrium(&normalized1, &normalized2);
             let naive_ld = naive_linkage_disequilibrium(&normalized1, &normalized2);
             assert!((ld - naive_ld).abs() < 1e-10 || (ld.is_nan() && naive_ld.is_nan()));
         }
