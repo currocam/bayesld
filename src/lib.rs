@@ -384,8 +384,8 @@ impl StreamingStats {
             )));
         }
 
-        // Add sites from this batch, counting only those outside NaN regions
-        let mut n_valid_sites: u64 = shape[0] as u64;
+        // Add valid sites from this batch
+        let n_sites = shape[0] as u64;
         for i in 0..shape[0] {
             let position = positions[i];
             // We don't check for NaN here, we trust the python caller to have already
@@ -394,13 +394,11 @@ impl StreamingStats {
 
             if self.ploidy.are_valid_genotypes(&genotypes) {
                 self.add_site(position, &genotypes)
-            } else {
-                n_valid_sites -= 1;
             }
         }
 
         // VCF do not normally contain HOMREF but we need to account for them!
-        let num_homref = region_span - n_valid_sites as f64 + 1.0;
+        let num_homref = region_span - n_sites as f64 + 1.0;
         assert!(
             num_homref.is_finite() && num_homref >= 0.0,
             "num_homref: {}",
