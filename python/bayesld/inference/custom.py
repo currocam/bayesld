@@ -11,10 +11,6 @@ The seams come in three tiers, matching *when* they are needed:
   ``prior_stan_data`` maps the stored prior dict onto your Stan data names
   (defaults to passing it through unchanged); ``param_coords`` labels any
   parameterization-specific posterior dims (defaults to none).
-  A Stan file that ``#include``s ``shared/data_stats.stan`` also picks up the
-  optional ``use_missingness`` / ``missingness`` data entries (see
-  ``.with_data(missingness=...)``); a file that doesn't will simply leave them
-  unused.
 - **Case 2 (``.active_learning_round(...)``):** additionally supply
   ``build_demography``, ``expected`` and ``extract_params`` so det-vs-MC bias can
   be evaluated at Pathfinder proposals.

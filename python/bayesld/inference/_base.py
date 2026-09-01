@@ -8,7 +8,6 @@ import copy
 import logging
 import pathlib
 import time
-import warnings
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 import numpy as np
@@ -75,29 +74,6 @@ _DEFAULT_HYPERPRIOR = {
     "lkj_eta": 2.0,
     "log_sigma_y_scale": 1.0,
 }
-
-_MIN_EFFECTIVE_HAPLOIDS = 4.0
-
-
-def _ld_fs_beta(S: np.ndarray | float) -> np.ndarray | float:
-    return 1.0 / np.square(S - 1.0)
-
-
-def _ld_fs_alpha(S: np.ndarray | float) -> np.ndarray | float:
-    return np.square(np.square(S) - S + 2.0) / np.square(np.square(S) - 3.0 * S + 2.0)
-
-
-def _rescale_ld_effective_sample(
-    mu_S: np.ndarray, S: float, S_eff: np.ndarray
-) -> np.ndarray:
-    """Take an LD prediction corrected for sample size S and change the correction factor to S_eff.
-    """
-    beta_S = _ld_fs_beta(S)
-    alpha_S = _ld_fs_alpha(S)
-    mu_inf = (mu_S - 4.0 * beta_S) / (alpha_S - beta_S)
-    beta_eff = _ld_fs_beta(S_eff)
-    alpha_eff = _ld_fs_alpha(S_eff)
-    return (alpha_eff - beta_eff) * mu_inf + 4.0 * beta_eff
 
 # I think the output of the inference should be (by default) easy to follow.
 # So we exclude the GP-surrogate internals variables from the output.
@@ -247,8 +223,6 @@ class _BaseEngine(abc.ABC):
         num_samples: int,
         sequence_length: float,
         ploidy: int = 2,
-        *,
-        missingness: npt.ArrayLike | None = None,
     ) -> "_BaseEngine":
         """
         Set the data for sampling.
@@ -263,17 +237,6 @@ class _BaseEngine(abc.ABC):
         - num_samples: number of samples
         - sequence_length: sequence length (in base pairs)
         - ploidy: ploidy of the samples
-        - missingness: optional per-(window, bin) mean fraction of individuals *not*
-          jointly called at a site pair, as returned by ``bayesld.data_from_vcf`` /
-          ``data_from_tree_sequence`` (their ``"missingness"`` entry). Rescales the
-          predicted mean LD from the nominal haploid sample size
-          ``S = 2 * num_samples`` down to the effective size actually observed in
-          each bin, ``S_eff = S * (1 - missingness)``, using the Fournier
-          finite-sample correction. Accepts either a length-``n_bins`` vector
-          (broadcast to every window) or a full ``(num_windows, n_bins)`` matrix.
-          Only applies when ``ploidy == 2`` (a ``ploidy != 2`` value ignores it with
-          a warning, since the finite-sample correction itself is diploid-only).
-          Default ``None`` disables the correction, matching prior behaviour exactly.
 
         Returns:
         - a new model with the data attached (the receiver is left unchanged). If
@@ -283,76 +246,18 @@ class _BaseEngine(abc.ABC):
         new = self._clone()
         new._left_bins = np.asarray(left_bins, dtype=float)
         new._right_bins = np.asarray(right_bins, dtype=float)
-        mean_ld_arr = np.asarray(mean_ld, dtype=float)
         new._data = {
             "mean_diversity": np.asarray(mean_diversity, dtype=float),
-            "mean_ld": mean_ld_arr,
+            "mean_ld": np.asarray(mean_ld, dtype=float),
             "recombination_rate": float(recombination_rate),
             "mutation_rate": float(mutation_rate),
             "num_samples": int(num_samples),
             "sequence_length": float(sequence_length),
             "ploidy": int(ploidy),
-            "missingness": self._validate_missingness(
-                missingness, mean_ld_arr, int(num_samples), int(ploidy)
-            ),
         }
         if new._prior is None:
             new._prior = new._default_prior()
         return new
-
-    @staticmethod
-    def _validate_missingness(
-        missingness: npt.ArrayLike | None,
-        mean_ld: np.ndarray,
-        num_samples: int,
-        ploidy: int,
-    ) -> np.ndarray | None:
-        """Normalize/validate ``with_data(missingness=...)`` to ``mean_ld``'s shape."""
-        if missingness is None:
-            return None
-        if ploidy != 2:
-            warnings.warn(
-                "missingness correction only applies when ploidy == 2 "
-                f"(got ploidy={ploidy}); ignoring the supplied `missingness`.",
-                stacklevel=3,
-            )
-            return None
-
-        num_windows, n_bins = mean_ld.shape
-        arr = np.asarray(missingness, dtype=float)
-        if arr.ndim == 1:
-            if arr.shape != (n_bins,):
-                raise ValueError(
-                    f"missingness with 1 dimension must have shape ({n_bins},) "
-                    f"matching n_bins; got {arr.shape}."
-                )
-            arr = np.broadcast_to(arr, (num_windows, n_bins)).copy()
-        elif arr.shape != (num_windows, n_bins):
-            raise ValueError(
-                f"missingness must have shape ({num_windows}, {n_bins}) matching "
-                f"mean_ld, or ({n_bins},) to broadcast across windows; "
-                f"got {arr.shape}."
-            )
-
-        populated = np.isfinite(mean_ld)
-        bad = populated & ~(np.isfinite(arr) & (arr >= 0.0) & (arr < 1.0))
-        if np.any(bad):
-            w, b = np.argwhere(bad)[0]
-            raise ValueError(
-                f"missingness[{w}, {b}] = {arr[w, b]!r} is not in [0, 1) "
-                "(required wherever mean_ld is finite)."
-            )
-
-        s_eff = 2.0 * num_samples * (1.0 - arr)
-        floor_bad = populated & (s_eff < _MIN_EFFECTIVE_HAPLOIDS)
-        if np.any(floor_bad):
-            w, b = np.argwhere(floor_bad)[0]
-            raise ValueError(
-                f"missingness[{w}, {b}] = {arr[w, b]!r} leaves an effective haploid "
-                f"sample size of {s_eff[w, b]:.3g} (< {_MIN_EFFECTIVE_HAPLOIDS:g}); "
-                "the finite-sample correction is unstable that close to S=2."
-            )
-        return arr
 
     def with_hyperprior(self, **kwargs: float) -> "_BaseEngine":
         """
@@ -434,7 +339,6 @@ class _BaseEngine(abc.ABC):
         log_sigma_y_loc, log_sigma_y_scale = sg.sigma_prior_hyperparams(
             div, ld, self._hyperprior["log_sigma_y_scale"]
         )
-        missingness = self._data["missingness"]
 
         data = {
             "n_bins": int(len(self._left_bins)),
@@ -446,10 +350,6 @@ class _BaseEngine(abc.ABC):
             "ploidy": self._data["ploidy"],
             "pi_array": div,
             "ld_mat": ld,
-            "use_missingness": 0 if missingness is None else 1,
-            "missingness": (
-                np.zeros_like(ld) if missingness is None else missingness
-            ),
             "n_quad": int(len(self._gl_nodes)),
             "gl_nodes": self._gl_nodes,
             "gl_weights": self._gl_weights,
@@ -637,50 +537,8 @@ class _BaseEngine(abc.ABC):
                 coords={"bin": bin_coord},
             ),
         }
-        assert self._data is not None
-        missingness = self._data["missingness"]
-        if missingness is not None:
-            data_vars["missingness"] = xr.DataArray(
-                missingness,
-                dims=["window", "bin"],
-                coords={"window": c["window"], "bin": bin_coord},
-            )
         data_vars.update(self._constant_data_vars())
         return xr.Dataset(data_vars)
-
-    def _mu_y_per_window(self, post) -> np.ndarray:
-        """Predicted mean [pi, ld_1..ld_B] per window: (chain, draw, window, D).
-
-        Without missingness this is the complete-data mean broadcast to every
-        window (bit-identical to the old window-independent ``mu_y``). With
-        ``self._data["missingness"]`` set, each window's LD components are
-        rescaled from the nominal sample size to that window's effective size —
-        the Python twin of the ``use_missingness`` branch in
-        ``inference/stan/shared/model.stan``.
-        """
-        assert self._data is not None
-        expected_pi = post["expected_pi"].values  # (chain, draw)
-        corrected_expected_ld = post["corrected_expected_ld"].values  # (chain, draw, n_bins)
-        n_windows = len(self._data["mean_diversity"])
-        missingness = self._data["missingness"]
-
-        ld_shape = corrected_expected_ld.shape
-        if missingness is None:
-            ld_per_window = np.broadcast_to(
-                corrected_expected_ld[..., np.newaxis, :],
-                ld_shape[:-1] + (n_windows, ld_shape[-1]),
-            )
-        else:
-            S_full = 2.0 * self._data["num_samples"]
-            S_eff = S_full * (1.0 - missingness)  # (window, n_bins)
-            ld_per_window = _rescale_ld_effective_sample(
-                corrected_expected_ld[..., np.newaxis, :], S_full, S_eff
-            )
-
-        pi_per_window = np.broadcast_to(
-            expected_pi[..., np.newaxis], expected_pi.shape + (n_windows,)
-        )
-        return np.concatenate([pi_per_window[..., np.newaxis], ld_per_window], axis=-1)
 
     def _pointwise_log_lik(self, idata: "xr.DataTree") -> "xr.DataArray":
         if self._data is None:
@@ -689,8 +547,14 @@ class _BaseEngine(abc.ABC):
 
         post = idata.posterior
 
-        # mu_y: (chain, draw, window, D)
-        mu_y = self._mu_y_per_window(post)
+        # mu_y: (chain, draw, D)
+        mu_y = np.concatenate(
+            [
+                post["expected_pi"].values[..., np.newaxis],
+                post["corrected_expected_ld"].values,
+            ],
+            axis=-1,
+        )
         # L_Sigma = diag(sigma_y) @ L_Omega; solve via two steps to avoid
         # materialising L_Sigma and to exploit the known triangular structure.
         sigma_y = np.exp(post["log_sigma_y"].values)  # (chain, draw, D)
@@ -701,9 +565,8 @@ class _BaseEngine(abc.ABC):
         D = y_obs.shape[1]
 
         # residuals / sigma_y  →  (chain, draw, D, W)
-        residuals = y_obs - mu_y  # (chain, draw, window, D)
-        z = residuals / sigma_y[..., np.newaxis, :]
-        z = np.moveaxis(z, -1, -2)  # (chain, draw, D, window)
+        residuals = y_obs.T - mu_y[..., np.newaxis]
+        z = residuals / sigma_y[..., np.newaxis]
 
         # Forward solve  L_Omega v = z  →  v = L_Omega^{-1} z
         V = np.linalg.solve(L_Omega, z)  # (chain, draw, D, W)
@@ -735,18 +598,25 @@ class _BaseEngine(abc.ABC):
 
         post = idata.posterior
 
-        # mu_y: (chain, draw, window, D)
-        mu_y = self._mu_y_per_window(post)
+        # mu_y: (chain, draw, D)
+        mu_y = np.concatenate(
+            [
+                post["expected_pi"].values[..., np.newaxis],
+                post["corrected_expected_ld"].values,
+            ],
+            axis=-1,
+        )
         sigma_y = np.exp(post["log_sigma_y"].values)  # (chain, draw, D)
         L_Omega = post["L_Omega"].values  # (chain, draw, D, D)
 
-        n_chain, n_draw, n_windows, D = mu_y.shape
+        n_chain, n_draw, D = mu_y.shape
+        n_windows = len(self._data["mean_diversity"])
 
         # y = mu_y + L_Sigma z,  L_Sigma = diag(sigma_y) L_Omega,  z ~ N(0, I).
         rng = np.random.default_rng(seed)
         z = rng.standard_normal((n_chain, n_draw, n_windows, D))
         v = np.einsum("cdij,cdwj->cdwi", L_Omega, z)  # (chain, draw, window, D)
-        y = mu_y + sigma_y[:, :, np.newaxis, :] * v
+        y = mu_y[:, :, np.newaxis, :] + sigma_y[:, :, np.newaxis, :] * v
 
         c = self._coords()
         chain = post.coords["chain"].values
@@ -1086,12 +956,6 @@ class _BaseEngine(abc.ABC):
             return []
         d = self._data
         n_bins = None if self._left_bins is None else len(self._left_bins)
-        missingness = d["missingness"]
-        missingness_str = (
-            "none"
-            if missingness is None
-            else f"mean {np.nanmean(missingness):.3g}, max {np.nanmax(missingness):.3g}"
-        )
         return [
             ("Windows", str(len(d["mean_diversity"]))),
             ("LD bins", "unset" if n_bins is None else str(n_bins)),
@@ -1099,7 +963,6 @@ class _BaseEngine(abc.ABC):
             ("Sequence length", f"{d['sequence_length']:g}"),
             ("Mutation rate", f"{d['mutation_rate']:g}"),
             ("Recombination rate", f"{d['recombination_rate']:g}"),
-            ("Missingness", missingness_str),
         ]
 
     def _prior_rows(self) -> list[tuple[str, str]]:
