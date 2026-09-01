@@ -1,17 +1,9 @@
 """
 User-facing engine for a *custom* demographic parameterization.
 
-The three built-in engines (:class:`PiecewiseConstant`, :class:`PiecewiseExponential`,
-:class:`RandomWalk`) are typed subclasses of :class:`~bayesld.inference._base._BaseEngine`.
-``CustomEngine`` is the escape hatch for anything else: instead of writing a
-subclass, you supply your own static Stan file plus a handful of callables for the
-parameterization-specific seams. Everything else — compilation, the immutable
-builder pattern, NUTS sampling, the GP-bias surrogate, active learning — is
-inherited unchanged.
-
 The seams come in three tiers, matching *when* they are needed:
 
-- **Tier 1 (``.sample()``):** a Stan file producing ``expected_pi`` +
+- **Case 1 (``.sample()``):** a Stan file producing ``expected_pi`` +
   ``approx_expected_ld`` and consuming the shared surrogate data (the easiest
   path is to ``#include shared/*.stan`` — see ``inference/stan/piecewise_constant.stan``).
   You also need a prior: either call ``.with_prior(**names)`` explicitly, or pass
@@ -19,10 +11,14 @@ The seams come in three tiers, matching *when* they are needed:
   ``prior_stan_data`` maps the stored prior dict onto your Stan data names
   (defaults to passing it through unchanged); ``param_coords`` labels any
   parameterization-specific posterior dims (defaults to none).
-- **Tier 2 (``.active_learning_round(...)``):** additionally supply
+  A Stan file that ``#include``s ``shared/data_stats.stan`` also picks up the
+  optional ``use_missingness`` / ``missingness`` data entries (see
+  ``.with_data(missingness=...)``); a file that doesn't will simply leave them
+  unused.
+- **Case 2 (``.active_learning_round(...)``):** additionally supply
   ``build_demography``, ``expected`` and ``extract_params`` so det-vs-MC bias can
   be evaluated at Pathfinder proposals.
-- **Tier 3 (``.sample_prior(...)``):** additionally supply ``sample_prior`` for
+- **Case 3 (``.sample_prior(...)``):** additionally supply ``sample_prior`` for
   prior-predictive draws.
 
 Every callable receives the engine instance as its first argument (like an
@@ -30,7 +26,7 @@ unbound method), giving read-only access to ``engine._data``, ``engine._prior``,
 ``engine._left_bins`` / ``engine._right_bins`` etc. Callables left as ``None``
 raise a clear error only if the corresponding tier is exercised.
 
-Example (Tier 2)::
+Example (Case 2)::
 
     import numpy as np, msprime, pathlib
     from bayesld.inference import CustomEngine

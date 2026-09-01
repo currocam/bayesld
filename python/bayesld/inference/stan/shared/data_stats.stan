@@ -12,6 +12,10 @@ int<lower=1, upper=2> ploidy;
 vector[num_windows] pi_array;
 matrix[num_windows, n_bins] ld_mat;
 
+// Optional per-(window, bin) missingness correction (diploid only).
+int<lower=0, upper=1> use_missingness;
+matrix<lower=0, upper=1>[num_windows, n_bins] missingness;
+
 // Gauss-Legendre quadrature for numerical integration
 int<lower=1> n_quad;
 vector[n_quad] gl_nodes;

@@ -9,9 +9,16 @@ for (w in 1:num_windows) {
   for (b in 1:n_bins) y_obs[w, b + 1] = ld_mat[w, b];
 }
 
-// Stan's initialization relies on parameters to be centred. 
+// Stan's initialization relies on parameters to be centred.
 // I found that shifting the N_e parameters to the ballpark-Ne estimator works fine
 real log_ne_offset = log(mean(pi_array) / (4.0 * mutation_rate));
+
+// Per-window effective haploid sample size after the missingness discount, used by
+// rescale_ld_effective_sample (see shared/finite_sample.stan) in the model block.
+// S_full == S_eff everywhere when use_missingness == 0 (missingness is all zeros).
+real S_full = 2.0 * sample_size;
+array[num_windows] vector[n_bins] S_eff;
+for (w in 1:num_windows) S_eff[w] = S_full * (1.0 - row(missingness, w)');
 
 // GP bookeeping
 // https://users.aalto.fi/~ave/casestudies/Motorcycle/motorcycle.html

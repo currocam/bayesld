@@ -54,6 +54,14 @@ if (n_sigma > 0) {
   target += -0.5 * (quad_mu + quad_S) - 0.5 * sum(N_rep_sigma) * log_det_Sigma;
 }
 
-// Finally, the actual data. Here mu_y is the expected (corrected) mean value 
-// of the summary statistics
-y_obs ~ multi_normal_cholesky(mu_y, L_Sigma);
+// If the empirical windows were measured under missingness, rescale the LD components from S_full to each  window's S_eff.
+if (use_missingness == 1) {
+  array[num_windows] vector[D] mu_y_obs;
+  for (w in 1:num_windows) {
+    mu_y_obs[w, 1] = expected_pi;
+    mu_y_obs[w, 2:D] = rescale_ld_effective_sample(corrected_expected_ld, S_full, S_eff[w]);
+  }
+  y_obs ~ multi_normal_cholesky(mu_y_obs, L_Sigma);
+} else {
+  y_obs ~ multi_normal_cholesky(mu_y, L_Sigma);
+}
