@@ -10,6 +10,7 @@ process GONE2_COMPILE {
     """
     git clone https://github.com/esrud/GONE2
     cd GONE2
+    git checkout d26797e
     make gone
     cp gone2 ../
     """
