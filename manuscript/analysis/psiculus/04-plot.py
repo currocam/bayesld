@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
-#     "arviz==1.1.0",
+#     "arviz==1.3.0",
 #     "arviz-plots==1.1.0",
 #     "bayesld==0.1.0",
 #     "demesdraw==0.4.1",
@@ -12,7 +12,7 @@
 #     "netcdf4==1.7.4",
 #     "numba==0.67.0",
 #     "numpy==2.4.4",
-#     "pandas==3.0.2",
+#     "pandas==3.0.5",
 #     "scienceplots==2.2.2",
 #     "seaborn==0.13.2",
 #     "tqdm==4.70.0",
@@ -88,6 +88,7 @@ def _(pd):
         return pd.concat([data, new_rows], ignore_index=True)
     hapne = pd.read_csv("analysis/psiculus/hapne/results/ld_hapne_estimate.csv")
     hapne = _extend_up_to(hapne, 2500)
+    # Haploid!!!!!
     return (hapne,)
 
 
@@ -263,7 +264,7 @@ def _(
                COLORS[r"bayesld (3-epoch)"], r"bayesld (3-epoch)")
         series(walk["TIME"], walk["Q0.5"], walk["Q0.025"], walk["Q0.975"],
                COLORS[r"bayesld (log-random walk)"], r"bayesld (log-random walk)")
-        series(hapne["TIME"], hapne["Q0.5"], hapne["Q0.025"], hapne["Q0.975"],
+        series(hapne["TIME"], hapne["Q0.5"] / 2, hapne["Q0.025"] / 2, hapne["Q0.975"] / 2,
                COLORS["HapNe-LD"], "HapNe-LD", linestyle="--")
         series(phlash["Generation"], phlash["median"], phlash["lower"], phlash["upper"],
                COLORS["PHLASH"], "PHLASH", linestyle="--")
@@ -411,7 +412,7 @@ def _(gone, hapne, np):
 
 
     gone_demo = demography_from_columns(gone["Generation"], gone["Ne_diploids"], "gone")
-    hapne_demo = demography_from_columns(hapne["TIME"], hapne["Q0.5"], "hapne")
+    hapne_demo = demography_from_columns(hapne["TIME"], hapne["Q0.5"] / 2, "hapne")
     return demography_from_columns, gone_demo, hapne_demo
 
 
@@ -453,9 +454,9 @@ def _(bayesld, data, mutation_rate, recombination_rate, window_length):
 
 
 @app.cell
-def _(gone_demo):
+def _(hapne_demo):
     import demesdraw
-    demesdraw.size_history(gone_demo.to_demes())
+    demesdraw.size_history(hapne_demo.to_demes(), log_time = True)
     return
 
 
